@@ -108,7 +108,15 @@ When you are done, write a file called \`/tmp/pr-description.md\` with this form
 <any issues discovered, improvements suggested, or things intentionally left out. If none, say "None">
 
 ### Follow-up tickets
-If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, check the existing tickets list below first. If a similar ticket already exists, mention it in your PR description under Follow-ups (e.g., "Related to AGE-5") but do NOT include it in your follow_ups JSON array. Only include genuinely new issues that don't already have a ticket.
+If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, check the existing tickets list below first.
+
+**If a similar ticket already exists:** Add a comment to that ticket using this command:
+\`\`\`bash
+bash scripts/linear-comment.sh AGE-XX "Discovered while working on ${ISSUE_ID}: <your finding here>"
+\`\`\`
+Do NOT include it in your follow_ups JSON array.
+
+**If no similar ticket exists:** Include it in your follow_ups JSON array so a new ticket will be created.
 
 ## Existing Tickets
 These tickets already exist in Linear — do NOT create duplicates:
