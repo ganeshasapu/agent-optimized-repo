@@ -10,15 +10,31 @@ linear_gql() {
   local query="$1"
   require_env LINEAR_API_KEY
 
+  # Build JSON payload via python3 to avoid shell escaping issues
+  local payload
+  payload=$(python3 -c "import json; print(json.dumps({'query': '''$query'''}))")
+
   local response
   response=$(curl -s -S -X POST "$LINEAR_API_URL" \
     -H "Authorization: ${LINEAR_API_KEY}" \
     -H "Content-Type: application/json" \
-    -d "{\"query\": $(echo "$query" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}")
+    -d "$payload")
 
   local errors
-  errors=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('errors',''))" 2>/dev/null)
-  if [[ -n "$errors" && "$errors" != "None" && "$errors" != "" ]]; then
+  errors=$(echo "$response" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    errs = d.get('errors', None)
+    if errs:
+        print(errs)
+    else:
+        print('')
+except:
+    print('PARSE_ERROR')
+" 2>/dev/null)
+
+  if [[ -n "$errors" && "$errors" != "" ]]; then
     log_error "Linear API error: $errors"
     return 1
   fi
@@ -30,9 +46,9 @@ linear_get_issue() {
   local issue_id="$1"
   log_info "Fetching Linear issue: $issue_id"
 
-  local query="
+  local query='
     query {
-      issue(id: \"${issue_id}\") {
+      issue(id: "'"${issue_id}"'") {
         id
         identifier
         title
@@ -43,7 +59,7 @@ linear_get_issue() {
         comments { nodes { body user { name } } }
       }
     }
-  "
+  '
 
   local response
   response=$(linear_gql "$query") || return 1
@@ -59,13 +75,13 @@ linear_update_issue_status() {
   local state_id="$2"
   log_info "Updating issue $issue_id status to state $state_id"
 
-  local query="
+  local query='
     mutation {
-      issueUpdate(id: \"${issue_id}\", input: { stateId: \"${state_id}\" }) {
+      issueUpdate(id: "'"${issue_id}"'", input: { stateId: "'"${state_id}"'" }) {
         success
       }
     }
-  "
+  '
 
   linear_gql "$query" > /dev/null
   log_success "Issue status updated"
@@ -77,15 +93,15 @@ linear_add_comment() {
   log_info "Adding comment to issue $issue_id"
 
   local escaped_body
-  escaped_body=$(echo "$body" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')
+  escaped_body=$(python3 -c "import json; print(json.dumps('$body')[1:-1])")
 
-  local query="
+  local query='
     mutation {
-      commentCreate(input: { issueId: \"${issue_id}\", body: \"${escaped_body}\" }) {
+      commentCreate(input: { issueId: "'"${issue_id}"'", body: "'"${escaped_body}"'" }) {
         success
       }
     }
-  "
+  '
 
   linear_gql "$query" > /dev/null
   log_success "Comment added"
@@ -99,45 +115,71 @@ linear_create_issue() {
 
   log_info "Creating Linear issue: $title"
 
-  local escaped_title
-  escaped_title=$(echo "$title" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')
-  local escaped_desc
-  escaped_desc=$(echo "$description" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')
-
-  local label_input=""
-  if [[ -n "$label_ids" ]]; then
-    label_input=", labelIds: [$(echo "$label_ids" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' )]"
-  fi
-
-  local query="
-    mutation {
-      issueCreate(input: { teamId: \"${team_id}\", title: \"${escaped_title}\", description: \"${escaped_desc}\", priority: 4${label_input} }) {
-        success
-        issue { id identifier url }
-      }
-    }
-  "
-
+  # Use python3 for the entire mutation to avoid escaping nightmares
   local response
-  response=$(linear_gql "$query") || return 1
-  echo "$response" | python3 -c "
-import sys, json
-issue = json.load(sys.stdin)['data']['issueCreate']['issue']
-print(json.dumps(issue))
-"
+  response=$(python3 -c "
+import json, subprocess, os
+
+team_id = '$team_id'
+title = '''$title'''
+description = '''$description'''
+label_ids = '$label_ids'
+
+mutation_input = {
+    'teamId': team_id,
+    'title': title.strip(),
+    'description': description.strip(),
+    'priority': 4
+}
+if label_ids:
+    mutation_input['labelIds'] = [lid.strip() for lid in label_ids.split(',')]
+
+# Build GraphQL mutation
+title_escaped = json.dumps(title.strip())[1:-1]
+desc_escaped = json.dumps(description.strip())[1:-1]
+label_part = ''
+if label_ids:
+    ids = ', '.join(['\"' + lid.strip() + '\"' for lid in label_ids.split(',')])
+    label_part = f', labelIds: [{ids}]'
+
+query = f'''
+mutation {{
+  issueCreate(input: {{ teamId: \"{team_id}\", title: \"{title_escaped}\", description: \"{desc_escaped}\", priority: 4{label_part} }}) {{
+    success
+    issue {{ id identifier url }}
+  }}
+}}
+'''
+
+payload = json.dumps({'query': query})
+result = subprocess.run(
+    ['curl', '-s', '-S', '-X', 'POST', os.environ.get('LINEAR_API_URL', 'https://api.linear.app/graphql'),
+     '-H', f'Authorization: {os.environ[\"LINEAR_API_KEY\"]}',
+     '-H', 'Content-Type: application/json',
+     '-d', payload],
+    capture_output=True, text=True
+)
+data = json.loads(result.stdout)
+if 'errors' in data:
+    print(json.dumps({'error': data['errors']}))
+else:
+    print(json.dumps(data['data']['issueCreate']['issue']))
+") || return 1
+
+  echo "$response"
 }
 
 linear_get_states() {
   local team_id="$1"
   log_info "Fetching workflow states for team $team_id"
 
-  local query="
+  local query='
     query {
-      team(id: \"${team_id}\") {
+      team(id: "'"${team_id}"'") {
         states { nodes { id name type } }
       }
     }
-  "
+  '
 
   local response
   response=$(linear_gql "$query") || return 1
