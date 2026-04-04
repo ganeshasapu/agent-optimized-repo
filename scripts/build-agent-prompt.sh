@@ -49,10 +49,10 @@ if [[ -f /tmp/existing-tickets.txt ]] && [[ -s /tmp/existing-tickets.txt ]]; the
   EXISTING_TICKETS=$(cat /tmp/existing-tickets.txt)
 fi
 
-# Check for downloaded images
-IMAGE_FILES=""
-if [[ -d /tmp/ticket-images ]] && [[ "$(ls -A /tmp/ticket-images 2>/dev/null)" ]]; then
-  IMAGE_FILES=$(ls -1 /tmp/ticket-images/)
+# Check for image URLs
+IMAGE_URLS=""
+if [[ -f /tmp/image-urls.txt ]] && [[ -s /tmp/image-urls.txt ]]; then
+  IMAGE_URLS=$(cat /tmp/image-urls.txt)
 fi
 
 cat <<PROMPT
@@ -69,8 +69,8 @@ You have been assigned a Linear ticket to implement.
 ${COMMENTS}
 
 ## Attached Images
-${IMAGE_FILES:+The ticket includes images that have been downloaded to /tmp/ticket-images/. Use the Read tool to view them — they contain visual context for this ticket (mockups, screenshots, designs, etc.):}
-${IMAGE_FILES:-No images attached to this ticket.}
+${IMAGE_URLS:+The ticket includes images. Download them with curl and then use the Read tool to view them:}
+${IMAGE_URLS:-No images attached to this ticket.}
 
 ## Instructions
 

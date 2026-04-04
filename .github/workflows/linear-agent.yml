@@ -117,22 +117,6 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Download images if any were found
-          if [[ -s /tmp/image-urls.txt ]]; then
-            mkdir -p /tmp/ticket-images
-            COUNT=0
-            while IFS= read -r url; do
-              if [[ -n "$url" ]]; then
-                COUNT=$((COUNT + 1))
-                EXT=$(echo "$url" | grep -oE '\.(png|jpg|jpeg|gif|webp|svg)' | tail -1 || echo ".png")
-                curl -s -L -o "/tmp/ticket-images/image-${COUNT}${EXT}" "$url" && \
-                  echo "Downloaded image $COUNT: $url" || \
-                  echo "Failed to download: $url"
-              fi
-            done < /tmp/image-urls.txt
-            echo "Downloaded $COUNT image(s) to /tmp/ticket-images/"
-          fi
-
           # Run agent
           PROMPT=$(cat /tmp/agent-prompt.txt)
           claude -p "$PROMPT" \
