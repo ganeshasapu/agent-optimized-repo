@@ -27,6 +27,14 @@
 - `pnpm --filter=@biarritz/domain-users test` — Run tests for one domain
 - `pnpm --filter=@biarritz/web dev` — Dev server for web only
 
+### Linear Integration
+- Linear tickets trigger agents via webhook → GitHub Actions → `claude -p`
+- Webhook endpoint: `apps/web/app/api/webhooks/linear/route.ts`
+- Agent workflow: `.github/workflows/linear-agent.yml`
+- Linear API helpers: `scripts/lib/linear.sh`
+- Prompt builder: `scripts/build-agent-prompt.sh`
+- To list your team's workflow state IDs: `source scripts/lib/linear.sh && linear_get_states "$LINEAR_TEAM_ID"`
+
 ## Architecture
 
 ### Package Dependency Graph

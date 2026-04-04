@@ -54,6 +54,33 @@ pnpm agent:teardown
 4. Run `pnpm db:migrate` to apply it
 5. Never edit generated migration SQL files
 
+## Linear-Driven Workflow
+
+When triggered by a Linear ticket (via GitHub Actions), agents follow this flow:
+
+1. The prompt contains the ticket ID, title, description, labels, and comments
+2. Create a branch named `linear/<ticket-id>-<slug>` (e.g., `linear/BIA-42-add-project-model`)
+3. Implement the work described in the ticket
+4. If the ticket is vague, use your best judgment — prefer small, focused changes
+5. Run `pnpm agent:verify` — all checks must pass
+6. If you discover unrelated bugs, missing tests, or improvements, include them as `follow_ups` in your output JSON
+7. The workflow will automatically create a PR, update the Linear ticket, and file follow-up tickets
+
+### Output Format
+
+When running as a Linear-triggered agent, your final output MUST include this JSON block:
+
+```json
+{
+  "status": "success",
+  "summary": "Added project model with CRUD service and routes",
+  "branch": "linear/BIA-42-add-project-model",
+  "follow_ups": [
+    { "title": "Add index on projects.team_id", "description": "Query performance will degrade without an index on the team_id foreign key", "labels": ["tech-debt"] }
+  ]
+}
+```
+
 ## Rules for Agents
 
 - **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`
