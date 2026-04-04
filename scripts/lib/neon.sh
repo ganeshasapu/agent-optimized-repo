@@ -41,7 +41,7 @@ neon_create_branch() {
     || die "Failed to create Neon branch. Response: $response"
 
   local conn_response
-  conn_response=$(neon_api GET "/projects/${NEON_PROJECT_ID}/connection_uri?branch_id=${branch_id}&role_name=neondb_owner")
+  conn_response=$(neon_api GET "/projects/${NEON_PROJECT_ID}/connection_uri?branch_id=${branch_id}&role_name=neondb_owner&database_name=neondb")
 
   local conn_uri
   conn_uri=$(echo "$conn_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['uri'])" 2>/dev/null) \
