@@ -1,0 +1,49 @@
+name: Structural Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  structure:
+    name: Enforce Conventions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check domain package structure
+        run: |
+          status=0
+          for domain_dir in packages/domain-*/; do
+            [ -d "$domain_dir" ] || continue
+            domain=$(basename "$domain_dir")
+
+            for required in "package.json" "tsconfig.json" "src/index.ts" "CLAUDE.md"; do
+              if [ ! -f "${domain_dir}${required}" ]; then
+                echo "ERROR: ${domain_dir}${required} is missing"
+                status=1
+              fi
+            done
+
+            for required_dir in "src/routes" "src/services" "src/types" "__tests__"; do
+              if [ ! -d "${domain_dir}${required_dir}" ]; then
+                echo "ERROR: ${domain_dir}${required_dir}/ is missing"
+                status=1
+              fi
+            done
+          done
+          exit $status
+
+      - name: Check route re-exports exist
+        run: |
+          status=0
+          for domain_dir in packages/domain-*/; do
+            [ -d "$domain_dir" ] || continue
+            domain=$(basename "$domain_dir")
+            route_name="${domain#domain-}"
+
+            if [ -d "${domain_dir}src/routes" ] && [ ! -d "apps/web/app/(domains)/${route_name}" ]; then
+              echo "ERROR: apps/web/app/(domains)/${route_name}/ missing for ${domain}"
+              status=1
+            fi
+          done
+          exit $status
