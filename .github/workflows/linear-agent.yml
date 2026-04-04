@@ -78,13 +78,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Run agent — pass prompt via stdin
+          # Run agent — pass prompt via stdin, get JSON output for follow-ups
           cat /tmp/agent-prompt.txt | claude -p - \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-            --output-format text \
-            > /tmp/agent-output.txt 2>&1 || true
+            --output-format json \
+            > /tmp/agent-output.json 2>&1 || true
 
-          echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
+          echo "Agent output: $(wc -c < /tmp/agent-output.json) bytes"
 
       - name: Check results and push
         id: pr
@@ -164,3 +164,57 @@ jobs:
           else
             linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. Check the GitHub Actions log for details." || true
           fi
+
+      - name: Create follow-up tickets
+        if: steps.pr.outputs.status == 'success'
+        run: |
+          source scripts/lib/linear.sh
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+
+          # Extract follow-ups from the agent's JSON output
+          python3 /dev/stdin << 'PYEOF'
+          import json, re, subprocess, os
+
+          # The JSON output from claude --output-format json contains a "result" field with the text
+          try:
+              data = json.load(open("/tmp/agent-output.json"))
+              # claude --output-format json returns {"type":"result","result":"...text..."}
+              text = data.get("result", "") if isinstance(data, dict) else str(data)
+          except (json.JSONDecodeError, FileNotFoundError):
+              print("Could not read agent JSON output, skipping follow-ups")
+              exit(0)
+
+          # Look for follow_ups in the text
+          fence = "```"
+          pattern = fence + r'json\s*(\{.*?\})\s*' + fence
+          match = re.search(pattern, text, re.DOTALL)
+
+          follow_ups = []
+          if match:
+              try:
+                  result = json.loads(match.group(1))
+                  follow_ups = result.get("follow_ups", [])[:5]
+              except json.JSONDecodeError:
+                  pass
+
+          if not follow_ups:
+              print("No follow-up tickets to create")
+              exit(0)
+
+          team_id = os.environ.get("LINEAR_TEAM_ID", "")
+          identifier = os.environ.get("IDENTIFIER", "")
+          if not team_id:
+              print("LINEAR_TEAM_ID not set, skipping")
+              exit(0)
+
+          for fu in follow_ups:
+              title = fu.get("title", "")
+              desc = fu.get("description", "")
+              full_desc = f"Discovered while working on {identifier}.\n\n{desc}"
+              print(f"Creating follow-up: {title}")
+              subprocess.run(
+                  ["bash", "-c", f'source scripts/lib/linear.sh && linear_create_issue "{team_id}" "{title}" "{full_desc}" ""'],
+                  check=False,
+                  env={**os.environ, "IDENTIFIER": identifier}
+              )
+          PYEOF
