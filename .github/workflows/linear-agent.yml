@@ -40,7 +40,7 @@ jobs:
           ISSUE_ID="${{ github.event.client_payload.issue_id }}"
           echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
 
-          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description priority state { name } labels { nodes { name } } comments { nodes { body user { name } } } } }'}))")
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description priority state { name } labels { nodes { name } } comments { nodes { body user { name } } } attachments { nodes { url title metadata } } } }'}))")
 
           RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
             -H "Authorization: ${LINEAR_API_KEY}" \
@@ -59,11 +59,35 @@ jobs:
           echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
-          # Pre-compute the branch name so we don't need the agent to tell us
+          # Pre-compute the branch name
           SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
           BRANCH="linear/${IDENTIFIER}-${SLUG}"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "Branch will be: $BRANCH"
+
+          # Extract image URLs from attachments and description
+          IMAGE_URLS=$(python3 -c "
+          import json, re
+          data = json.load(open('/tmp/ticket.json'))
+          urls = []
+          # From attachments
+          for a in data.get('attachments', {}).get('nodes', []):
+              url = a.get('url', '')
+              if any(url.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']):
+                  urls.append(url)
+          # From markdown image syntax in description
+          desc = data.get('description', '') or ''
+          for match in re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', desc):
+              urls.append(match)
+          # From Linear upload URLs in description
+          for match in re.findall(r'(https://uploads\.linear\.app/[^\s\)]+)', desc):
+              if match not in urls:
+                  urls.append(match)
+          print('\n'.join(urls))
+          " 2>/dev/null || echo "")
+          echo "$IMAGE_URLS" > /tmp/image-urls.txt
+          IMAGE_COUNT=$(grep -c . /tmp/image-urls.txt 2>/dev/null || echo "0")
+          echo "Found $IMAGE_COUNT image(s)"
 
       - name: Build agent prompt
         run: |
@@ -78,11 +102,21 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Build image args if any images were found
+          IMAGE_ARGS=""
+          if [[ -s /tmp/image-urls.txt ]]; then
+            while IFS= read -r url; do
+              [[ -n "$url" ]] && IMAGE_ARGS="$IMAGE_ARGS --images $url"
+            done < /tmp/image-urls.txt
+            echo "Passing images to agent: $IMAGE_ARGS"
+          fi
+
           # Run agent
           PROMPT=$(cat /tmp/agent-prompt.txt)
           claude -p "$PROMPT" \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
             --output-format json \
+            $IMAGE_ARGS \
             > /tmp/agent-output.json 2>&1 || true
 
           echo "Agent output: $(wc -c < /tmp/agent-output.json) bytes"
