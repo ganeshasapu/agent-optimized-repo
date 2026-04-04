@@ -47,6 +47,10 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
+          echo "=== Raw Linear API response (first 500 chars) ==="
+          echo "$RESPONSE" | head -c 500
+          echo ""
+
           TICKET_JSON=$(echo "$RESPONSE" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)['data']['issue']
@@ -76,6 +80,11 @@ jobs:
             2>&1) || true
 
           echo "$AGENT_OUTPUT" > /tmp/agent-output.txt
+          echo "=== Agent output length: $(wc -c < /tmp/agent-output.txt) bytes ==="
+          echo "=== Last 500 chars of agent output ==="
+          tail -c 500 /tmp/agent-output.txt
+          echo ""
+          echo "=== End agent output ==="
 
           # Extract JSON result from agent output — try multiple patterns
           python3 << 'PYEOF'
