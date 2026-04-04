@@ -47,23 +47,28 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
-          echo "=== Raw Linear API response (first 500 chars) ==="
-          echo "$RESPONSE" | head -c 500
-          echo ""
-
           TICKET_JSON=$(echo "$RESPONSE" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)['data']['issue']
           print(json.dumps(data, indent=2))
           ")
           echo "$TICKET_JSON" > /tmp/ticket.json
+
           IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
+          TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
           echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+
+          # Pre-compute the branch name so we don't need the agent to tell us
+          SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
+          BRANCH="linear/${IDENTIFIER}-${SLUG}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Branch will be: $BRANCH"
 
       - name: Build agent prompt
         run: |
-          PROMPT=$(bash scripts/build-agent-prompt.sh /tmp/ticket.json)
-          echo "$PROMPT" > /tmp/agent-prompt.txt
+          bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
+          echo "Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes"
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@latest
@@ -73,123 +78,68 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          echo "=== Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes ==="
-
-          # Pass prompt via stdin to avoid shell argument length limits
+          # Run agent — pass prompt via stdin
           cat /tmp/agent-prompt.txt | claude -p - \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
             --output-format text \
             > /tmp/agent-output.txt 2>&1 || true
 
-          echo "=== Agent output length: $(wc -c < /tmp/agent-output.txt) bytes ==="
-          echo "=== First 200 chars ==="
-          head -c 200 /tmp/agent-output.txt || true
-          echo ""
-          echo "=== Last 500 chars ==="
-          tail -c 500 /tmp/agent-output.txt || true
-          echo ""
-          echo "=== End agent output ==="
+          echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
 
-          # Extract JSON result from agent output
-          python3 /dev/stdin << 'PYEOF'
-          import json, re, subprocess
-
-          text = open("/tmp/agent-output.txt").read()
-          fence = "```"
-          result = None
-
-          # Try code-fenced JSON first
-          pattern = fence + r'json\s*(\{.*?\})\s*' + fence
-          match = re.search(pattern, text, re.DOTALL)
-          if match:
-              try:
-                  result = json.loads(match.group(1))
-              except json.JSONDecodeError:
-                  pass
-
-          # Try any JSON object with "status" key
-          if result is None:
-              for m in re.finditer(r'\{[^{}]*"status"\s*:\s*"[^"]*"[^{}]*\}', text, re.DOTALL):
-                  try:
-                      result = json.loads(m.group(0))
-                      break
-                  except json.JSONDecodeError:
-                      continue
-
-          # Try relaxed: find last JSON object with "status" in output
-          if result is None:
-              for m in re.finditer(r'\{[^{}]+\}', text, re.DOTALL):
-                  try:
-                      obj = json.loads(m.group(0))
-                      if "status" in obj:
-                          result = obj
-                  except json.JSONDecodeError:
-                      continue
-
-          if result is None:
-              # Check if agent made commits (success even without JSON output)
-              git_result = subprocess.run(["git", "branch", "--list", "linear/*"], capture_output=True, text=True)
-              branches = [b.strip() for b in git_result.stdout.strip().split("\n") if b.strip()]
-              if branches:
-                  branch = branches[0].lstrip("* ")
-                  result = {"status": "success", "summary": "Agent completed work but did not output structured JSON", "branch": branch, "follow_ups": []}
-              else:
-                  result = {"status": "failed", "summary": "Could not parse agent output and no branch was created", "branch": "", "follow_ups": []}
-
-          # Normalize status
-          if result.get("status", "").lower() in ("success", "done", "completed"):
-              result["status"] = "success"
-
-          json.dump(result, open("/tmp/agent-result.json", "w"), indent=2)
-          print(f"Result: status={result.get('status')}, branch={result.get('branch','')}")
-          PYEOF
-
-      - name: Push branch and create PR
+      - name: Check results and push
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('branch',''))")
-          STATUS=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('status','failed'))")
-          SUMMARY=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('summary','No summary'))")
+          BRANCH="${{ steps.ticket.outputs.branch }}"
           IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-          TITLE=$(python3 -c "import json; print(json.load(open('/tmp/ticket.json'))['title'])")
+          TITLE="${{ steps.ticket.outputs.title }}"
 
-          if [[ -z "$BRANCH" || "$STATUS" != "success" ]]; then
-            echo "Agent did not succeed. Skipping PR."
-            echo "pr_url=" >> "$GITHUB_OUTPUT"
+          # Check if the agent created the branch with commits
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
+            echo "Branch $BRANCH exists with $AHEAD commits ahead of main"
+          else
+            echo "Branch $BRANCH was not created by the agent."
             echo "status=failed" >> "$GITHUB_OUTPUT"
+            # Save agent output as summary
+            SUMMARY=$(tail -c 300 /tmp/agent-output.txt | tr '\n' ' ' | head -c 200)
             echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$AHEAD" == "0" ]]; then
+            echo "Branch exists but has no new commits."
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "summary=Agent created branch but made no changes" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # Force-push to handle existing branches from previous runs
           git push origin "$BRANCH" --force-with-lease 2>/dev/null || git push origin "$BRANCH" --force
 
-          # Check if PR already exists for this branch
+          # Check if PR already exists
           EXISTING_PR=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
 
           if [[ -n "$EXISTING_PR" ]]; then
             echo "PR already exists: $EXISTING_PR"
             PR_URL="$EXISTING_PR"
           else
+            PR_BODY="## Linear Ticket
+          [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
+
+          ---
+          *Automated by Linear Agent workflow*"
+
             PR_URL=$(gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "${IDENTIFIER}: ${TITLE}" \
-              --body "## Linear Ticket
-          [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
-
-          ## Summary
-          ${SUMMARY}
-
-          ---
-          *Automated by Linear Agent workflow*")
+              --body "$PR_BODY")
           fi
 
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+          echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Update Linear ticket
         if: always()
@@ -198,16 +148,13 @@ jobs:
           ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
           PR_URL="${{ steps.pr.outputs.pr_url }}"
           STATUS="${{ steps.pr.outputs.status }}"
-          SUMMARY="${{ steps.pr.outputs.summary }}"
 
-          # Skip if we don't have an issue ID
           if [[ -z "$ISSUE_ID" ]]; then
-            echo "No issue ID available, skipping Linear update"
+            echo "No issue ID, skipping Linear update"
             exit 0
           fi
 
-          if [[ -n "$PR_URL" && "$STATUS" == "success" ]]; then
-            # Success: move to In Review and link PR
+          if [[ "$STATUS" == "success" && -n "$PR_URL" ]]; then
             if [[ -n "$LINEAR_STATUS_IN_REVIEW" ]]; then
               linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW" || true
             fi
@@ -215,49 +162,5 @@ jobs:
           elif [[ "${{ job.status }}" == "cancelled" ]]; then
             linear_add_comment "$ISSUE_ID" "Agent timed out after 30 minutes. Consider breaking this ticket into smaller pieces." || true
           else
-            # Failure: post helpful error details
-            FAIL_SUMMARY=$(python3 -c "
-          import json
-          try:
-              r = json.load(open('/tmp/agent-result.json'))
-              print(r.get('summary', 'No details available'))
-          except:
-              print('Agent did not produce output')
-          " 2>/dev/null)
-            linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. Details: ${FAIL_SUMMARY}" || true
+            linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. Check the GitHub Actions log for details." || true
           fi
-
-      - name: Create follow-up tickets
-        if: steps.pr.outputs.status == 'success'
-        run: |
-          source scripts/lib/linear.sh
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-
-          python3 << 'PYEOF'
-          import json, subprocess, os
-
-          result = json.load(open("/tmp/agent-result.json"))
-          follow_ups = result.get("follow_ups", [])[:5]
-          team_id = os.environ.get("LINEAR_TEAM_ID", "")
-
-          if not team_id:
-              print("LINEAR_TEAM_ID not set, skipping follow-up creation")
-              exit(0)
-
-          if not follow_ups:
-              print("No follow-ups to create")
-              exit(0)
-
-          identifier = os.environ.get("IDENTIFIER", "unknown")
-
-          for fu in follow_ups:
-              title = fu.get("title", "")
-              desc = fu.get("description", "")
-              full_desc = f"Discovered while working on {identifier}.\n\n{desc}"
-              print(f"Creating follow-up: {title}")
-              subprocess.run(
-                  ["bash", "-c", f'source scripts/lib/linear.sh && linear_create_issue "{team_id}" "{title}" "{full_desc}" ""'],
-                  check=False,
-                  env={**os.environ, "IDENTIFIER": identifier}
-              )
-          PYEOF
