@@ -1,0 +1,338 @@
+name: Agent Revision
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+env:
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+concurrency:
+  group: agent-revision-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  revision:
+    name: Address Review Feedback
+    if: github.event.review.state == 'changes_requested'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check if this is an agent PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          REVIEWER="${{ github.event.review.user.login }}"
+
+          # Guard 1: Only process PRs on linear/* branches
+          if [[ "$BRANCH" != linear/* ]]; then
+            echo "Not an agent branch ($BRANCH), skipping"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Guard 2: Don't process reviews from bots (prevents infinite loops)
+          if [[ "$REVIEWER" == *"[bot]"* ]]; then
+            echo "Review is from a bot ($REVIEWER), skipping"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Guard 3: Verify PR body contains agent marker
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+          if ! echo "$PR_BODY" | grep -q "Automated by Linear Agent workflow"; then
+            echo "PR not created by agent, skipping"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Guard 4: Check revision count via PR labels (max 2 revisions)
+          REVISION_COUNT=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name | select(startswith("agent-revision"))] | length')
+          if [[ "$REVISION_COUNT" -ge 2 ]]; then
+            echo "Max revisions (2) reached, skipping"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            gh pr comment "$PR_NUMBER" --body "Agent has already performed 2 revisions on this PR. Further changes require manual implementation."
+            exit 0
+          fi
+          NEXT_REVISION=$((REVISION_COUNT + 1))
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "next_revision=$NEXT_REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract ticket identifier from PR
+        if: steps.guard.outputs.should_run == 'true'
+        id: ticket_info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.guard.outputs.pr_number }}"
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+
+          # Extract identifier from PR body — format: [AGE-123](https://linear.app/issue/AGE-123)
+          IDENTIFIER=$(echo "$PR_BODY" | python3 -c "
+          import sys, re
+          body = sys.stdin.read()
+          match = re.search(r'\[([A-Z]+-\d+)\]\(https://linear\.app', body)
+          if match:
+              print(match.group(1))
+          else:
+              print('')
+          " 2>/dev/null)
+
+          if [[ -z "$IDENTIFIER" ]]; then
+            echo "Could not extract ticket identifier from PR body"
+            echo "has_ticket=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+            echo "has_ticket=true" >> "$GITHUB_OUTPUT"
+            echo "Extracted ticket: $IDENTIFIER"
+          fi
+
+      - name: Fetch ticket from Linear
+        if: steps.guard.outputs.should_run == 'true' && steps.ticket_info.outputs.has_ticket == 'true'
+        id: ticket
+        run: |
+          IDENTIFIER="${{ steps.ticket_info.outputs.identifier }}"
+
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(python3 -c "import json; print(json.dumps({'query': 'query { issues(filter: { identifier: { eq: \"${IDENTIFIER}\" } }) { nodes { id identifier title description } } }'}))")")
+
+          TICKET_JSON=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)['data']['issues']['nodes']
+          if data:
+              print(json.dumps(data[0], indent=2))
+          else:
+              print('{}')
+          " 2>/dev/null)
+
+          echo "$TICKET_JSON" > /tmp/ticket.json
+
+          ISSUE_ID=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+          TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null)
+
+          echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        if: steps.guard.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.guard.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        if: steps.guard.outputs.should_run == 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        if: steps.guard.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        if: steps.guard.outputs.should_run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Gather review comments
+        if: steps.guard.outputs.should_run == 'true'
+        id: reviews
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.guard.outputs.pr_number }}"
+          REVIEW_ID="${{ github.event.review.id }}"
+
+          # Get the review body (top-level review comment)
+          REVIEW_BODY="${{ github.event.review.body }}"
+          echo "$REVIEW_BODY" > /tmp/review-body.txt
+
+          # Get inline comments from this specific review
+          gh api \
+            "repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews/${REVIEW_ID}/comments" \
+            --jq '.[] | "File: \(.path):\(.line // .original_line // "N/A")\nComment: \(.body)\n---"' \
+            > /tmp/review-comments.txt 2>/dev/null || echo "" > /tmp/review-comments.txt
+
+          # Get the PR diff against main
+          git diff main..HEAD | head -c 20000 > /tmp/pr-diff.txt
+
+          echo "Collected review: $(wc -c < /tmp/review-body.txt) bytes body, $(wc -c < /tmp/review-comments.txt) bytes comments"
+
+      - name: Build revision prompt
+        if: steps.guard.outputs.should_run == 'true'
+        run: |
+          IDENTIFIER="${{ steps.ticket_info.outputs.identifier }}"
+          TITLE="${{ steps.ticket.outputs.title }}"
+          REVIEW_BODY=$(cat /tmp/review-body.txt)
+          REVIEW_COMMENTS=$(cat /tmp/review-comments.txt)
+          PR_DIFF=$(cat /tmp/pr-diff.txt)
+
+          CLAUDE_MD=$(cat CLAUDE.md)
+          AGENTS_MD=$(cat AGENTS.md)
+
+          cat > /tmp/revision-prompt.txt <<PROMPT_EOF
+          You are addressing review feedback on a pull request for the Biarritz codebase.
+
+          ## Original Ticket
+          - ID: ${IDENTIFIER}
+          - Title: ${TITLE}
+
+          ## Current PR Diff (against main)
+          \`\`\`diff
+          ${PR_DIFF}
+          \`\`\`
+
+          ## Review Feedback
+
+          ### Reviewer's Summary
+          ${REVIEW_BODY}
+
+          ### Inline Comments
+          ${REVIEW_COMMENTS}
+
+          ## Instructions
+          1. You are already on the PR branch with all existing changes applied.
+          2. Read each review comment carefully and address it.
+          3. For inline comments, go to the specific file and line mentioned and make the requested change.
+          4. Do NOT revert unrelated changes or start over — only address the review feedback.
+          5. If a comment is unclear or contradictory, use your best judgment and note your interpretation.
+          6. Run \`pnpm agent:verify\` before finishing — all checks must pass.
+          7. Commit your changes with a message like "address review feedback for ${IDENTIFIER}".
+
+          ### Quality Rules
+          - Use \`@biarritz/ui\` components — never raw HTML for common patterns
+          - Use \`cn()\` for className merging
+          - Use \`type\` imports for types
+          - Use extensionless relative imports
+          - Follow DESIGN.md for any visual changes
+
+          ## Repo Context
+
+          ### CLAUDE.md
+          ${CLAUDE_MD}
+
+          ### AGENTS.md
+          ${AGENTS_MD}
+
+          ## Output
+          When done, print EXACTLY this JSON block:
+          \`\`\`json
+          {
+            "status": "success or failed",
+            "summary": "what you changed to address the review in 2-3 sentences"
+          }
+          \`\`\`
+          PROMPT_EOF
+
+          echo "Revision prompt: $(wc -c < /tmp/revision-prompt.txt) bytes"
+
+      - name: Install Claude Code
+        if: steps.guard.outputs.should_run == 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Run revision agent
+        if: steps.guard.outputs.should_run == 'true'
+        id: revision_agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          PROMPT=$(cat /tmp/revision-prompt.txt)
+          claude -p "$PROMPT" \
+            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
+            --output-format text \
+            > /tmp/revision-output.txt 2>&1 || true
+
+          echo "Revision output: $(wc -c < /tmp/revision-output.txt) bytes"
+
+          # Extract status and summary from agent's JSON output
+          python3 -c "
+          import re, json
+          text = open('/tmp/revision-output.txt').read()
+          pattern = r'\`\`\`json\s*(\{.*?\})\s*\`\`\`'
+          match = re.search(pattern, text, re.DOTALL)
+          status = 'unknown'
+          summary = 'No summary'
+          if match:
+              try:
+                  result = json.loads(match.group(1))
+                  status = result.get('status', 'unknown')
+                  summary = result.get('summary', 'No summary')
+              except json.JSONDecodeError:
+                  pass
+          with open('/tmp/revision-status.txt', 'w') as f:
+              f.write(status)
+          with open('/tmp/revision-summary.txt', 'w') as f:
+              f.write(summary)
+          " 2>/dev/null || true
+
+          AGENT_STATUS=$(cat /tmp/revision-status.txt 2>/dev/null || echo "unknown")
+          AGENT_SUMMARY=$(cat /tmp/revision-summary.txt 2>/dev/null || echo "No summary")
+          echo "agent_status=$AGENT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "agent_summary=$AGENT_SUMMARY" >> "$GITHUB_OUTPUT"
+
+      - name: Push revision and update PR
+        if: steps.guard.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.guard.outputs.branch }}"
+          PR_NUMBER="${{ steps.guard.outputs.pr_number }}"
+          NEXT_REVISION="${{ steps.guard.outputs.next_revision }}"
+          AGENT_STATUS=$(cat /tmp/revision-status.txt 2>/dev/null || echo "unknown")
+          AGENT_SUMMARY=$(cat /tmp/revision-summary.txt 2>/dev/null || echo "No summary")
+
+          # Check if there are new commits
+          AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "0")
+
+          if [[ "$AHEAD" -gt 0 ]]; then
+            git push origin "$BRANCH"
+            echo "Pushed $AHEAD new commit(s)"
+          else
+            echo "No new commits to push"
+          fi
+
+          # Add revision label to track count
+          gh pr edit "$PR_NUMBER" --add-label "agent-revision-${NEXT_REVISION}" 2>/dev/null || true
+
+          # Comment on the PR
+          if [[ "$AGENT_STATUS" == "success" ]]; then
+            gh pr comment "$PR_NUMBER" --body "**Agent Revision ${NEXT_REVISION}:** ${AGENT_SUMMARY}
+
+          The review feedback has been addressed. Please re-review the changes.
+
+          ---
+          *Automated by Agent Revision workflow*"
+          else
+            gh pr comment "$PR_NUMBER" --body "**Agent Revision ${NEXT_REVISION} (failed):** The agent was unable to fully address the review feedback. Manual intervention may be required.
+
+          ---
+          *Automated by Agent Revision workflow*"
+          fi
+
+      - name: Update Linear ticket
+        if: always() && steps.guard.outputs.should_run == 'true' && steps.ticket.outputs.issue_id != ''
+        run: |
+          source scripts/lib/linear.sh
+          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
+          AGENT_STATUS=$(cat /tmp/revision-status.txt 2>/dev/null || echo "unknown")
+          AGENT_SUMMARY=$(cat /tmp/revision-summary.txt 2>/dev/null || echo "No summary")
+          NEXT_REVISION="${{ steps.guard.outputs.next_revision }}"
+
+          if [[ "$AGENT_STATUS" == "success" ]]; then
+            linear_add_comment "$ISSUE_ID" "Revision ${NEXT_REVISION}: Addressed review feedback. ${AGENT_SUMMARY}" || true
+          else
+            linear_add_comment "$ISSUE_ID" "Revision ${NEXT_REVISION}: Agent failed to address review feedback. Manual fix needed." || true
+          fi

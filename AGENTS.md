@@ -81,6 +81,56 @@ When running as a Linear-triggered agent, your final output MUST include this JS
 }
 ```
 
+## CI Failure Retry
+
+If your implementation fails `pnpm agent:verify`, the workflow will automatically retry once:
+
+1. The error output from the failed verification is captured
+2. A retry prompt is built with: original task + your diff + the error output
+3. A second agent run attempts to fix the verification errors
+4. If the retry also fails, the ticket is marked as failed in Linear
+
+This means you should always output a proper status JSON — even on failure — so the workflow can detect and retry.
+
+## Automated Review
+
+After a PR is created, an automated reviewer agent analyzes your changes against:
+- Scope compliance (stayed within assigned domain)
+- Design system compliance (if UI changes)
+- Code quality (imports, naming, validation)
+- Test coverage
+- Ticket completeness
+
+The review is advisory and does not block merging. Address FAIL items before requesting human review.
+
+## Review-to-Revision Loop
+
+When a human reviewer submits "changes requested" on an agent PR:
+1. A revision agent reads the review comments
+2. It addresses each comment and pushes fixes to the same branch
+3. Maximum 2 automatic revisions per PR
+4. After 2 revisions, further changes require manual implementation
+
+## Ticket Decomposition
+
+Large tickets can be automatically broken into smaller sub-tickets:
+
+1. Move a ticket to "Decompose" status in Linear
+2. A decomposition agent analyzes the ticket and codebase structure
+3. If decomposition is warranted, sub-tickets are created as children of the parent
+4. Each sub-ticket is scoped to a single domain, ordered by dependencies
+5. The parent moves to "Decomposed" status
+6. Sub-tickets are set to "Todo", triggering implementation agents for each one
+
+### When tickets get decomposed
+- They touch multiple domain packages
+- They have 3+ distinct requirements
+- They require both schema changes and UI work across domains
+
+### Sub-ticket completion
+- Each sub-ticket is implemented independently by its own agent
+- Linear's built-in auto-close handles parent completion when all children are done
+
 ## Rules for Agents
 
 - **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`

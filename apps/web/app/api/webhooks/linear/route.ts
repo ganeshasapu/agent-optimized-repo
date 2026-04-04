@@ -5,6 +5,7 @@ const LINEAR_WEBHOOK_SECRET = process.env.LINEAR_WEBHOOK_SECRET ?? "";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "";
 const LINEAR_TRIGGER_STATUS = process.env.LINEAR_TRIGGER_STATUS ?? "Todo";
+const LINEAR_DECOMPOSE_STATUS = process.env.LINEAR_DECOMPOSE_STATUS ?? "Decompose";
 
 function verifySignature(body: string, signature: string): boolean {
   const hmac = createHmac("sha256", LINEAR_WEBHOOK_SECRET);
@@ -44,10 +45,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ignored: true, reason: "not an Issue event" });
   }
 
-  // Only trigger when status changes to the trigger status
+  // Determine which event type to dispatch based on status
   const currentStatus = payload.data.state?.name;
-  if (currentStatus !== LINEAR_TRIGGER_STATUS) {
-    return NextResponse.json({ ignored: true, reason: `status is "${currentStatus}", not "${LINEAR_TRIGGER_STATUS}"` });
+  let eventType: string;
+  if (currentStatus === LINEAR_TRIGGER_STATUS) {
+    eventType = "linear-ticket";
+  } else if (currentStatus === LINEAR_DECOMPOSE_STATUS) {
+    eventType = "linear-decompose";
+  } else {
+    return NextResponse.json({
+      ignored: true,
+      reason: `status is "${currentStatus}", not "${LINEAR_TRIGGER_STATUS}" or "${LINEAR_DECOMPOSE_STATUS}"`,
+    });
   }
 
   // Only trigger on updates that changed the state (not creates with the status already set, unless it's a create)
@@ -67,7 +76,7 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        event_type: "linear-ticket",
+        event_type: eventType,
         client_payload: {
           issue_id: payload.data.id,
           title: payload.data.title,

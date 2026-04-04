@@ -13,7 +13,7 @@ jobs:
   agent:
     name: Execute Linear Ticket
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
@@ -104,6 +104,17 @@ jobs:
           " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
           echo "Found $(wc -l < /tmp/existing-tickets.txt) existing tickets"
 
+      - name: Prepare branch for agent
+        run: |
+          BRANCH="${{ steps.ticket.outputs.branch }}"
+          # Delete any local branch left over from a previous run or remote fetch.
+          # This ensures the agent can `git checkout -b $BRANCH` cleanly.
+          # The remote branch (if any) is left intact — force-push later overwrites it.
+          git branch -D "$BRANCH" 2>/dev/null && echo "Deleted local branch: $BRANCH" || true
+          # Also remove the remote-tracking ref so `git checkout` doesn't auto-create
+          # a local tracking branch from the old remote branch.
+          git update-ref -d "refs/remotes/origin/$BRANCH" 2>/dev/null || true
+
       - name: Build agent prompt
         run: |
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
@@ -125,6 +136,91 @@ jobs:
             > /tmp/agent-output.txt 2>&1 || true
 
           echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
+
+          # Extract status from agent's JSON output block
+          AGENT_STATUS=$(python3 -c "
+          import re, json
+          text = open('/tmp/agent-output.txt').read()
+          pattern = r'\`\`\`json\s*(\{.*?\})\s*\`\`\`'
+          match = re.search(pattern, text, re.DOTALL)
+          if match:
+              try:
+                  result = json.loads(match.group(1))
+                  print(result.get('status', 'unknown'))
+              except json.JSONDecodeError:
+                  print('unknown')
+          else:
+              print('unknown')
+          " 2>/dev/null || echo "unknown")
+          echo "agent_status=$AGENT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "Agent reported status: $AGENT_STATUS"
+
+      - name: Retry agent on failure
+        if: steps.agent.outputs.agent_status == 'failed'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Agent reported failure — attempting retry..."
+
+          BRANCH="${{ steps.ticket.outputs.branch }}"
+
+          # Capture what the agent already changed
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            AGENT_DIFF=$(git diff main.."$BRANCH" 2>/dev/null | head -c 15000)
+          else
+            AGENT_DIFF=$(git diff 2>/dev/null | head -c 15000)
+          fi
+
+          # Capture the error output (last 3000 chars likely contain verify errors)
+          ERROR_TAIL=$(tail -c 3000 /tmp/agent-output.txt)
+
+          # Build retry prompt
+          ORIGINAL_PROMPT=$(cat /tmp/agent-prompt.txt)
+
+          cat > /tmp/retry-prompt.txt <<RETRY_EOF
+          You are retrying a failed implementation attempt.
+
+          ## Original Task
+          ${ORIGINAL_PROMPT}
+
+          ## What Was Already Done
+          The previous agent attempt made the following changes (diff against main):
+
+          \`\`\`diff
+          ${AGENT_DIFF}
+          \`\`\`
+
+          ## Error Output
+          The previous attempt failed during verification (\`pnpm agent:verify\`). Here is the error output:
+
+          \`\`\`
+          ${ERROR_TAIL}
+          \`\`\`
+
+          ## Retry Instructions
+          1. You are on the same branch the previous agent created. The changes above are already applied.
+          2. Diagnose the verification errors from the error output above.
+          3. Fix the issues — do NOT start over from scratch unless the approach is fundamentally broken.
+          4. Run \`pnpm agent:verify\` again to confirm all checks pass.
+          5. Commit your fixes to the existing branch.
+          6. Output the standard JSON block when done.
+          RETRY_EOF
+
+          # Ensure we are on the agent's branch for the retry
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            git checkout "$BRANCH"
+          fi
+
+          RETRY_PROMPT=$(cat /tmp/retry-prompt.txt)
+          claude -p "$RETRY_PROMPT" \
+            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
+            --output-format text \
+            > /tmp/agent-output-retry.txt 2>&1 || true
+
+          echo "Retry output: $(wc -c < /tmp/agent-output-retry.txt) bytes"
+
+          # Replace agent output with retry output for downstream steps
+          cp /tmp/agent-output-retry.txt /tmp/agent-output.txt
 
       - name: Check results and push
         id: pr
@@ -203,15 +299,19 @@ jobs:
             exit 0
           fi
 
+          AGENT_STATUS="${{ steps.agent.outputs.agent_status }}"
+
           if [[ "$STATUS" == "success" && -n "$PR_URL" ]]; then
             if [[ -n "$LINEAR_STATUS_IN_REVIEW" ]]; then
               linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW" || true
             fi
             linear_add_comment "$ISSUE_ID" "PR created: ${PR_URL}" || true
           elif [[ "${{ job.status }}" == "cancelled" ]]; then
-            linear_add_comment "$ISSUE_ID" "Agent timed out after 30 minutes. Consider breaking this ticket into smaller pieces." || true
+            linear_add_comment "$ISSUE_ID" "Agent timed out after 45 minutes. Consider breaking this ticket into smaller pieces." || true
+          elif [[ "$AGENT_STATUS" == "failed" ]]; then
+            linear_add_comment "$ISSUE_ID" "Agent failed verification and retry also failed. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" || true
           else
-            linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. Check the GitHub Actions log for details." || true
+            linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" || true
           fi
 
       - name: Create follow-up tickets
@@ -264,3 +364,63 @@ jobs:
                   env={**os.environ, "IDENTIFIER": identifier}
               )
           PYEOF
+
+      - name: Run automated reviewer
+        if: steps.pr.outputs.status == 'success'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.ticket.outputs.branch }}"
+          PR_URL="${{ steps.pr.outputs.pr_url }}"
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+
+          # Build reviewer prompt
+          bash scripts/build-reviewer-prompt.sh /tmp/ticket.json "$PR_URL" "$BRANCH" > /tmp/reviewer-prompt.txt
+          echo "Reviewer prompt size: $(wc -c < /tmp/reviewer-prompt.txt) bytes"
+
+          # Run reviewer agent with read-only tools
+          REVIEW_PROMPT=$(cat /tmp/reviewer-prompt.txt)
+          claude -p "$REVIEW_PROMPT" \
+            --allowedTools "Read,Glob,Grep" \
+            --output-format text \
+            > /tmp/review-output.txt 2>&1 || true
+
+          echo "Review output: $(wc -c < /tmp/review-output.txt) bytes"
+
+          # Parse verdict
+          VERDICT=$(grep -oP 'REVIEW_VERDICT:\s*\K\S+' /tmp/review-output.txt || echo "COMMENT")
+
+          # Extract review body (between REVIEW_BODY: and LINE_COMMENTS:)
+          BODY=$(python3 -c "
+          import re
+          text = open('/tmp/review-output.txt').read()
+          match = re.search(r'REVIEW_BODY:\s*\n(.*?)(?:LINE_COMMENTS:|$)', text, re.DOTALL)
+          if match:
+              print(match.group(1).strip())
+          else:
+              print('Review agent did not produce structured output.')
+          ")
+
+          # Add advisory banner
+          FULL_BODY=$(cat <<REVIEW_BODY_EOF
+          > **Automated Agent Review** — This review is advisory and does not block merging.
+
+          ${BODY}
+
+          ---
+          *Reviewed by Claude Agent for ${IDENTIFIER}*
+          REVIEW_BODY_EOF
+          )
+
+          # Map verdict to gh pr review flag
+          case "$VERDICT" in
+            APPROVE)         REVIEW_FLAG="--approve" ;;
+            REQUEST_CHANGES) REVIEW_FLAG="--comment" ;;  # Post as comment, not request-changes, to avoid triggering revision loop
+            *)               REVIEW_FLAG="--comment" ;;
+          esac
+
+          # Post review
+          echo "$FULL_BODY" | gh pr review "$PR_URL" $REVIEW_FLAG --body-file - || true
+
+          echo "Review posted with verdict: $VERDICT"

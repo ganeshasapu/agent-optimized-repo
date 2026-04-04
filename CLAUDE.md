@@ -34,6 +34,11 @@
 - Linear API helpers: `scripts/lib/linear.sh`
 - Prompt builder: `scripts/build-agent-prompt.sh`
 - To list your team's workflow state IDs: `source scripts/lib/linear.sh && linear_get_states "$LINEAR_TEAM_ID"`
+- Automated reviewer: runs after PR creation in `linear-agent.yml`, posts advisory review
+- Agent revision: `.github/workflows/agent-revision.yml` — auto-addresses "changes requested" review feedback on agent PRs (max 2 revisions)
+- Ticket decomposition: `.github/workflows/linear-decompose.yml` — move ticket to "Decompose" status to break into sub-tickets
+- Decomposition prompt: `scripts/build-decompose-prompt.sh`
+- Reviewer prompt: `scripts/build-reviewer-prompt.sh`
 
 ## Architecture
 
