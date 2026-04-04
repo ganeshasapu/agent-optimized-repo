@@ -43,6 +43,12 @@ SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 
 CLAUDE_MD=$(cat "${REPO_ROOT}/CLAUDE.md")
 AGENTS_MD=$(cat "${REPO_ROOT}/AGENTS.md")
 
+# Read existing tickets if available
+EXISTING_TICKETS=""
+if [[ -f /tmp/existing-tickets.txt ]] && [[ -s /tmp/existing-tickets.txt ]]; then
+  EXISTING_TICKETS=$(cat /tmp/existing-tickets.txt)
+fi
+
 cat <<PROMPT
 You are working on the Biarritz codebase.
 You have been assigned a Linear ticket to implement.
@@ -102,7 +108,11 @@ When you are done, write a file called \`/tmp/pr-description.md\` with this form
 <any issues discovered, improvements suggested, or things intentionally left out. If none, say "None">
 
 ### Follow-up tickets
-If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, note them as follow-ups in your output JSON.
+If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, check the existing tickets list below first. If a similar ticket already exists, mention it in your PR description under Follow-ups (e.g., "Related to AGE-5") but do NOT include it in your follow_ups JSON array. Only include genuinely new issues that don't already have a ticket.
+
+## Existing Tickets
+These tickets already exist in Linear — do NOT create duplicates:
+${EXISTING_TICKETS:-No existing tickets found.}
 
 ## Repo Context
 

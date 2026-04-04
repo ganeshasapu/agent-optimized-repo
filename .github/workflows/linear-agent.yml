@@ -89,6 +89,21 @@ jobs:
           IMAGE_COUNT=$(grep -c . /tmp/image-urls.txt 2>/dev/null || echo "0")
           echo "Found $IMAGE_COUNT image(s)"
 
+      - name: Fetch existing tickets from Linear
+        run: |
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { team(id: \"'\"$LINEAR_TEAM_ID\"'\") { issues(first: 100, filter: { state: { type: { nin: [\"completed\", \"canceled\"] } } }) { nodes { identifier title state { name } } } } }'}))")
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)['data']['team']['issues']['nodes']
+          for issue in data:
+              print(f\"{issue['identifier']}: {issue['title']} [{issue['state']['name']}]\")
+          " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
+          echo "Found $(wc -l < /tmp/existing-tickets.txt) existing tickets"
+
       - name: Build agent prompt
         run: |
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
