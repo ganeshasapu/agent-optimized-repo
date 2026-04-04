@@ -8,6 +8,8 @@ env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
   LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
+  NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
 
 jobs:
   agent:
@@ -33,6 +35,21 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Create Neon database branch
+        id: neon
+        run: |
+          source scripts/lib/common.sh
+          source scripts/lib/neon.sh
+          BRANCH_ID="agent-${{ github.run_id }}"
+          DATABASE_URL=$(neon_create_branch "$BRANCH_ID")
+          echo "database_url=$DATABASE_URL" >> "$GITHUB_OUTPUT"
+          echo "branch_id=$(cat .neon-branch-id)" >> "$GITHUB_OUTPUT"
+
+          # Run migrations against the branch
+          cd packages/db
+          DATABASE_URL="$DATABASE_URL" npx drizzle-kit migrate
+          echo "Migrations applied to Neon branch"
 
       - name: Fetch full ticket from Linear
         id: ticket
@@ -127,6 +144,7 @@ jobs:
         id: agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DATABASE_URL: ${{ steps.neon.outputs.database_url }}
         run: |
           # Run agent
           PROMPT=$(cat /tmp/agent-prompt.txt)
@@ -159,6 +177,7 @@ jobs:
         if: steps.agent.outputs.agent_status == 'failed'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DATABASE_URL: ${{ steps.neon.outputs.database_url }}
         run: |
           echo "Agent reported failure — attempting retry..."
 
@@ -424,3 +443,13 @@ jobs:
           echo "$FULL_BODY" | gh pr review "$PR_URL" $REVIEW_FLAG --body-file - || true
 
           echo "Review posted with verdict: $VERDICT"
+
+      - name: Cleanup Neon branch
+        if: always()
+        run: |
+          if [[ -f .neon-branch-id ]]; then
+            source scripts/lib/common.sh
+            source scripts/lib/neon.sh
+            BRANCH_ID=$(cat .neon-branch-id)
+            neon_delete_branch "$BRANCH_ID" || true
+          fi
