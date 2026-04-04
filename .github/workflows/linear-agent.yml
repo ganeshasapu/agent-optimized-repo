@@ -125,8 +125,17 @@ jobs:
             echo "PR already exists: $EXISTING_PR"
             PR_URL="$EXISTING_PR"
           else
+            # Use agent-written PR description if available, otherwise fallback
+            if [[ -f /tmp/pr-description.md ]]; then
+              AGENT_DESC=$(cat /tmp/pr-description.md)
+            else
+              AGENT_DESC="*No description provided by agent.*"
+            fi
+
             PR_BODY="## Linear Ticket
           [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
+
+          ${AGENT_DESC}
 
           ---
           *Automated by Linear Agent workflow*"

@@ -57,12 +57,52 @@ You have been assigned a Linear ticket to implement.
 ${COMMENTS}
 
 ## Instructions
-1. Read CLAUDE.md and AGENTS.md to understand the repo conventions
-2. Create a branch named linear/${ISSUE_ID}-${SLUG}
-3. Implement the work described in the ticket
-4. If the ticket is vague, use your best judgment — prefer small, focused changes
-5. Run \`pnpm agent:verify\` before finishing — all checks must pass
-6. If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, note them as follow-ups
+
+### Implementation
+1. Create a branch named linear/${ISSUE_ID}-${SLUG}
+2. Implement the work described in the ticket
+3. If the ticket is vague, use your best judgment — prefer small, focused changes
+4. Run \`pnpm agent:verify\` before finishing — all checks must pass
+
+### How to learn the codebase
+- Read CLAUDE.md and AGENTS.md at the repo root for overall conventions
+- Each package has its own CLAUDE.md with package-specific rules — read the ones relevant to your work
+- Use \`packages/domain-users/\` as the reference example for how domains are structured, how tests are written, and how routes are wired up
+- When creating a new domain, follow the exact patterns in domain-users (package.json, tsconfig.json, vitest.config.ts, eslint.config.js, directory structure)
+
+### Testing requirements
+- Unit tests are required for all new services — mock the DB with \`vi.mock("@biarritz/db", ...)\`
+- Integration tests use \`describe.skipIf(!process.env.DATABASE_URL)\` guard
+- Test files go in \`__tests__/unit/\` and \`__tests__/integration/\` matching the source file name
+- Look at \`packages/domain-users/__tests__/\` for examples of how to structure tests and fixtures
+- Run tests with \`pnpm --filter=@biarritz/<package-name> test\` during development
+
+### Quality
+- Use \`@biarritz/ui\` components (Button, Input, Card, etc.) — never build raw HTML for common UI patterns
+- Use \`cn()\` from \`@biarritz/ui\` for className merging
+- Validate all user input with Zod schemas in \`src/lib/validations.ts\`
+- Use \`type\` imports for types: \`import type { Foo } from "./bar"\`
+- Use extensionless relative imports: \`"./utils"\` not \`"./utils.js"\`
+
+### PR Description
+When you are done, write a file called \`/tmp/pr-description.md\` with this format:
+
+## Summary
+<2-4 sentences describing what was done and why>
+
+## Changes
+<bullet list of key changes — files created, modified, patterns followed>
+
+## Testing
+<describe what tests were added and how to verify the changes>
+- Unit tests: \`pnpm --filter=@biarritz/<package> test\`
+- Manual testing: <steps to manually verify, e.g. "visit /endpoint and check...">
+
+## Follow-ups
+<any issues discovered, improvements suggested, or things intentionally left out. If none, say "None">
+
+### Follow-up tickets
+If you discover bugs, missing tests, or improvement opportunities unrelated to this ticket, note them as follow-ups in your output JSON.
 
 ## Repo Context
 
