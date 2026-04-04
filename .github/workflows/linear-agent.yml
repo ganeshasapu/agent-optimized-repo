@@ -78,13 +78,17 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Run agent — pass prompt via stdin, get JSON output for follow-ups
-          cat /tmp/agent-prompt.txt | claude -p - \
+          # Run agent
+          PROMPT=$(cat /tmp/agent-prompt.txt)
+          claude -p "$PROMPT" \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
             --output-format json \
             > /tmp/agent-output.json 2>&1 || true
 
           echo "Agent output: $(wc -c < /tmp/agent-output.json) bytes"
+          echo "=== Agent output (last 500 chars) ==="
+          tail -c 500 /tmp/agent-output.json || true
+          echo ""
 
       - name: Check results and push
         id: pr
