@@ -121,13 +121,10 @@ jobs:
           PROMPT=$(cat /tmp/agent-prompt.txt)
           claude -p "$PROMPT" \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-            --output-format json \
-            > /tmp/agent-output.json 2>&1 || true
+            --output-format text \
+            > /tmp/agent-output.txt 2>&1 || true
 
-          echo "Agent output: $(wc -c < /tmp/agent-output.json) bytes"
-          echo "=== Agent output (last 500 chars) ==="
-          tail -c 500 /tmp/agent-output.json || true
-          echo ""
+          echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
 
       - name: Check results and push
         id: pr
@@ -223,20 +220,17 @@ jobs:
           source scripts/lib/linear.sh
           IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
 
-          # Extract follow-ups from the agent's JSON output
+          # Extract follow-ups from the agent's text output
           python3 /dev/stdin << 'PYEOF'
           import json, re, subprocess, os
 
-          # The JSON output from claude --output-format json contains a "result" field with the text
           try:
-              data = json.load(open("/tmp/agent-output.json"))
-              # claude --output-format json returns {"type":"result","result":"...text..."}
-              text = data.get("result", "") if isinstance(data, dict) else str(data)
-          except (json.JSONDecodeError, FileNotFoundError):
-              print("Could not read agent JSON output, skipping follow-ups")
+              text = open("/tmp/agent-output.txt").read()
+          except FileNotFoundError:
+              print("No agent output found, skipping follow-ups")
               exit(0)
 
-          # Look for follow_ups in the text
+          # Look for follow_ups in a JSON block in the text
           fence = "```"
           pattern = fence + r'json\s*(\{.*?\})\s*' + fence
           match = re.search(pattern, text, re.DOTALL)
