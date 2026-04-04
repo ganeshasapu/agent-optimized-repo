@@ -390,13 +390,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set +o pipefail
           BRANCH="${{ steps.ticket.outputs.branch }}"
           PR_URL="${{ steps.pr.outputs.pr_url }}"
           IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
 
           # Build reviewer prompt
           bash scripts/build-reviewer-prompt.sh /tmp/ticket.json "$PR_URL" "$BRANCH" > /tmp/reviewer-prompt.txt
-          echo "Reviewer prompt size: $(wc -c < /tmp/reviewer-prompt.txt) bytes"
+          echo "Reviewer prompt size: $(wc -c < /tmp/reviewer-prompt.txt) bytes" >&2
 
           # Run reviewer agent with read-only tools
           REVIEW_PROMPT=$(cat /tmp/reviewer-prompt.txt)
@@ -405,44 +406,35 @@ jobs:
             --output-format text \
             > /tmp/review-output.txt 2>&1 || true
 
-          echo "Review output: $(wc -c < /tmp/review-output.txt) bytes"
+          echo "Review output: $(wc -c < /tmp/review-output.txt) bytes" >&2
 
           # Parse verdict
-          VERDICT=$(grep -oP 'REVIEW_VERDICT:\s*\K\S+' /tmp/review-output.txt || echo "COMMENT")
+          VERDICT=$(grep -oP 'REVIEW_VERDICT:\s*\K\S+' /tmp/review-output.txt 2>/dev/null || echo "COMMENT")
 
-          # Extract review body (between REVIEW_BODY: and LINE_COMMENTS:)
-          BODY=$(python3 -c "
+          # Extract review body and write to file
+          python3 -c "
           import re
           text = open('/tmp/review-output.txt').read()
           match = re.search(r'REVIEW_BODY:\s*\n(.*?)(?:LINE_COMMENTS:|$)', text, re.DOTALL)
-          if match:
-              print(match.group(1).strip())
-          else:
-              print('Review agent did not produce structured output.')
-          ")
-
-          # Add advisory banner
-          FULL_BODY=$(cat <<REVIEW_BODY_EOF
-          > **Automated Agent Review** — This review is advisory and does not block merging.
-
-          ${BODY}
-
-          ---
-          *Reviewed by Claude Agent for ${IDENTIFIER}*
-          REVIEW_BODY_EOF
-          )
+          body = match.group(1).strip() if match else 'Review agent did not produce structured output.'
+          identifier = '${IDENTIFIER}'
+          with open('/tmp/review-body.txt', 'w') as f:
+              f.write('> **Automated Agent Review** — This review is advisory and does not block merging.\n\n')
+              f.write(body)
+              f.write(f'\n\n---\n*Reviewed by Claude Agent for {identifier}*\n')
+          "
 
           # Map verdict to gh pr review flag
           case "$VERDICT" in
             APPROVE)         REVIEW_FLAG="--approve" ;;
-            REQUEST_CHANGES) REVIEW_FLAG="--comment" ;;  # Post as comment, not request-changes, to avoid triggering revision loop
+            REQUEST_CHANGES) REVIEW_FLAG="--comment" ;;
             *)               REVIEW_FLAG="--comment" ;;
           esac
 
           # Post review
-          echo "$FULL_BODY" | gh pr review "$PR_URL" $REVIEW_FLAG --body-file - || true
+          gh pr review "$PR_URL" $REVIEW_FLAG --body-file /tmp/review-body.txt || true
 
-          echo "Review posted with verdict: $VERDICT"
+          echo "Review posted with verdict: $VERDICT" >&2
 
       - name: Cleanup Neon branch
         if: always()
