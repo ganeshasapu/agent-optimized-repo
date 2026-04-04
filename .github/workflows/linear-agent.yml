@@ -73,16 +73,20 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          PROMPT=$(cat /tmp/agent-prompt.txt)
-          AGENT_OUTPUT=$(claude -p "$PROMPT" \
+          echo "=== Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes ==="
+
+          # Pass prompt via stdin to avoid shell argument length limits
+          cat /tmp/agent-prompt.txt | claude -p - \
             --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
             --output-format text \
-            2>&1) || true
+            > /tmp/agent-output.txt 2>&1 || true
 
-          echo "$AGENT_OUTPUT" > /tmp/agent-output.txt
           echo "=== Agent output length: $(wc -c < /tmp/agent-output.txt) bytes ==="
-          echo "=== Last 500 chars of agent output ==="
-          tail -c 500 /tmp/agent-output.txt
+          echo "=== First 200 chars ==="
+          head -c 200 /tmp/agent-output.txt || true
+          echo ""
+          echo "=== Last 500 chars ==="
+          tail -c 500 /tmp/agent-output.txt || true
           echo ""
           echo "=== End agent output ==="
 
