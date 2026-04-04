@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import "./global.css";
+import { AppSidebar } from "./components/app-sidebar";
 
 export const metadata: Metadata = {
   title: "Biarritz",
@@ -15,7 +16,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-background font-sans antialiased">
-        {children}
+        <div className="flex h-screen overflow-hidden">
+          <AppSidebar />
+          <main className="flex flex-1 flex-col overflow-y-auto">
+            {children}
+          </main>
+        </div>
       </body>
     </html>
   );

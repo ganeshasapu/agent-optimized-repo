@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
 @theme {
+  /* Base */
   --color-background: oklch(1 0 0);
   --color-foreground: oklch(0.145 0 0);
+
+  /* Card */
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.145 0 0);
+
+  /* Popover */
   --color-popover: oklch(1 0 0);
   --color-popover-foreground: oklch(0.145 0 0);
+
+  /* Primary */
   --color-primary: oklch(0.205 0 0);
   --color-primary-foreground: oklch(0.985 0 0);
+
+  /* Secondary */
   --color-secondary: oklch(0.97 0 0);
   --color-secondary-foreground: oklch(0.205 0 0);
+
+  /* Muted */
   --color-muted: oklch(0.97 0 0);
   --color-muted-foreground: oklch(0.556 0 0);
+
+  /* Accent */
   --color-accent: oklch(0.97 0 0);
   --color-accent-foreground: oklch(0.205 0 0);
+
+  /* Destructive */
   --color-destructive: oklch(0.577 0.245 27.325);
   --color-destructive-foreground: oklch(0.577 0.245 27.325);
+
+  /* Border / Input / Ring */
   --color-border: oklch(0.922 0 0);
   --color-input: oklch(0.922 0 0);
   --color-ring: oklch(0.708 0 0);
-  --radius: 0.625rem;
+
+  /* Radius */
+  --radius: 0.5rem;
+
+  /* Sidebar (Linear-inspired dark sidebar) */
+  --color-sidebar: oklch(0.13 0 0);
+  --color-sidebar-foreground: oklch(0.98 0 0);
+  --color-sidebar-muted: oklch(0.50 0 0);
+  --color-sidebar-hover: oklch(0.20 0 0);
+  --color-sidebar-active: oklch(0.22 0 0);
+  --color-sidebar-border: oklch(0.22 0 0);
+
+  /* Linear purple accent */
+  --color-violet: oklch(0.55 0.20 280);
+  --color-violet-foreground: oklch(0.98 0 0);
+  --color-violet-muted: oklch(0.93 0.05 280);
 }
 
 @layer base {

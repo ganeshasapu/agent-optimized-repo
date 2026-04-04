@@ -7,11 +7,16 @@ interface UserListProps {
 
 export function UserList({ users }: UserListProps) {
   if (users.length === 0) {
-    return <p className="text-muted-foreground">No users found.</p>;
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2">
+        <p className="text-sm font-medium text-foreground">No members yet</p>
+        <p className="text-xs text-muted-foreground">Users will appear here once added.</p>
+      </div>
+    );
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="border rounded-lg overflow-hidden divide-y">
       {users.map((user) => (
         <UserCard key={user.id} user={user} />
       ))}
