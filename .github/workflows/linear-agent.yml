@@ -1,0 +1,171 @@
+name: Linear Agent
+
+on:
+  repository_dispatch:
+    types: [linear-ticket]
+
+env:
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+  LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
+  LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
+
+jobs:
+  agent:
+    name: Execute Linear Ticket
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch full ticket from Linear
+        id: ticket
+        run: |
+          source scripts/lib/linear.sh
+          ISSUE_ID="${{ github.event.client_payload.issue_id }}"
+          TICKET_JSON=$(linear_get_issue "$ISSUE_ID")
+          echo "$TICKET_JSON" > /tmp/ticket.json
+          IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
+          echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Build agent prompt
+        id: prompt
+        run: |
+          PROMPT=$(bash scripts/build-agent-prompt.sh /tmp/ticket.json)
+          echo "$PROMPT" > /tmp/agent-prompt.txt
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Run Claude agent
+        id: agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          PROMPT=$(cat /tmp/agent-prompt.txt)
+          AGENT_OUTPUT=$(claude -p "$PROMPT" \
+            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
+            --output-format text \
+            2>&1) || true
+
+          echo "$AGENT_OUTPUT" > /tmp/agent-output.txt
+
+          python3 -c "
+          import sys, json, re
+          text = open('/tmp/agent-output.txt').read()
+          match = re.search(r'\`\`\`json\s*(\{.*?\})\s*\`\`\`', text, re.DOTALL)
+          if not match:
+              match = re.search(r'(\{[^{}]*\"status\"[^{}]*\})', text, re.DOTALL)
+          if match:
+              result = json.loads(match.group(1))
+              json.dump(result, open('/tmp/agent-result.json', 'w'), indent=2)
+              print('Agent result extracted')
+          else:
+              fallback = {'status': 'failed', 'summary': 'Could not parse agent output', 'branch': '', 'follow_ups': []}
+              json.dump(fallback, open('/tmp/agent-result.json', 'w'), indent=2)
+              print('WARNING: Could not extract agent result, using fallback')
+          "
+
+      - name: Push branch and create PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('branch',''))")
+          STATUS=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('status','failed'))")
+          SUMMARY=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('summary','No summary'))")
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+
+          if [[ -z "$BRANCH" || "$STATUS" == "failed" ]]; then
+            echo "Agent failed or no branch created. Skipping PR."
+            echo "pr_url=" >> "$GITHUB_OUTPUT"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "${IDENTIFIER}: $(python3 -c "import json; print(json.load(open('/tmp/ticket.json'))['title'])")" \
+            --body "$(cat <<EOF
+          ## Linear Ticket
+          [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
+
+          ## Summary
+          ${SUMMARY}
+
+          ---
+          *Automated by Linear Agent workflow*
+          EOF
+          )")
+
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Update Linear ticket
+        if: always()
+        run: |
+          source scripts/lib/linear.sh
+          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+          PR_URL="${{ steps.pr.outputs.pr_url }}"
+          STATUS="${{ steps.pr.outputs.status }}"
+
+          if [[ -n "$PR_URL" && "$STATUS" == "success" ]]; then
+            if [[ -n "$LINEAR_STATUS_IN_REVIEW" ]]; then
+              linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW"
+            fi
+            linear_add_comment "$ISSUE_ID" "PR created: ${PR_URL}"
+          elif [[ "${{ job.status }}" == "cancelled" ]]; then
+            linear_add_comment "$ISSUE_ID" "Agent timed out after 30 minutes. The ticket may need to be broken into smaller pieces."
+          else
+            SUMMARY=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('summary','Agent did not produce output'))" 2>/dev/null || echo "Agent failed")
+            linear_add_comment "$ISSUE_ID" "Agent failed to complete this ticket.\n\nDetails: ${SUMMARY}"
+          fi
+
+      - name: Create follow-up tickets
+        if: steps.pr.outputs.status == 'success'
+        run: |
+          source scripts/lib/linear.sh
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+
+          python3 -c "
+          import json, subprocess, os
+
+          result = json.load(open('/tmp/agent-result.json'))
+          follow_ups = result.get('follow_ups', [])[:5]
+          team_id = os.environ.get('LINEAR_TEAM_ID', '')
+
+          if not team_id:
+              print('LINEAR_TEAM_ID not set, skipping follow-up creation')
+              exit(0)
+
+          for fu in follow_ups:
+              title = fu.get('title', '')
+              desc = fu.get('description', '')
+              desc = f'Discovered while working on ${IDENTIFIER}.\n\n{desc}'
+              print(f'Creating follow-up: {title}')
+              subprocess.run([
+                  'bash', '-c',
+                  f'source scripts/lib/linear.sh && linear_create_issue \"{team_id}\" \"{title}\" \"{desc}\" \"\"'
+              ], check=False)
+          "
