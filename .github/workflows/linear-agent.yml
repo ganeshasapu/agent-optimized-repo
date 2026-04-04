@@ -90,55 +90,58 @@ jobs:
           echo ""
           echo "=== End agent output ==="
 
-          # Extract JSON result from agent output — try multiple patterns
-          python3 << 'PYEOF'
-          import json, re
+          # Extract JSON result from agent output
+          python3 /dev/stdin << 'PYEOF'
+          import json, re, subprocess
 
           text = open("/tmp/agent-output.txt").read()
+          fence = "```"
+          result = None
 
           # Try code-fenced JSON first
-          match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+          pattern = fence + r'json\s*(\{.*?\})\s*' + fence
+          match = re.search(pattern, text, re.DOTALL)
+          if match:
+              try:
+                  result = json.loads(match.group(1))
+              except json.JSONDecodeError:
+                  pass
 
           # Try any JSON object with "status" key
-          if not match:
+          if result is None:
               for m in re.finditer(r'\{[^{}]*"status"\s*:\s*"[^"]*"[^{}]*\}', text, re.DOTALL):
                   try:
-                      json.loads(m.group(0))
-                      match = m
+                      result = json.loads(m.group(0))
+                      break
                   except json.JSONDecodeError:
                       continue
 
-          # Try relaxed: find last JSON object in output
-          if not match:
+          # Try relaxed: find last JSON object with "status" in output
+          if result is None:
               for m in re.finditer(r'\{[^{}]+\}', text, re.DOTALL):
                   try:
                       obj = json.loads(m.group(0))
                       if "status" in obj:
-                          match = m
+                          result = obj
                   except json.JSONDecodeError:
                       continue
 
-          if match:
-              result = json.loads(match.group(0) if hasattr(match, 'group') else match.group())
-              # Normalize status values
-              if result.get("status", "").lower() in ("success", "done", "completed"):
-                  result["status"] = "success"
-              json.dump(result, open("/tmp/agent-result.json", "w"), indent=2)
-              print(f"Agent result: status={result.get('status')}, branch={result.get('branch','')}")
-          else:
+          if result is None:
               # Check if agent made commits (success even without JSON output)
-              import subprocess
               git_result = subprocess.run(["git", "branch", "--list", "linear/*"], capture_output=True, text=True)
               branches = [b.strip() for b in git_result.stdout.strip().split("\n") if b.strip()]
-
               if branches:
                   branch = branches[0].lstrip("* ")
-                  result = {"status": "success", "summary": "Agent completed work (output parsing failed but branch was created)", "branch": branch, "follow_ups": []}
+                  result = {"status": "success", "summary": "Agent completed work but did not output structured JSON", "branch": branch, "follow_ups": []}
               else:
                   result = {"status": "failed", "summary": "Could not parse agent output and no branch was created", "branch": "", "follow_ups": []}
 
-              json.dump(result, open("/tmp/agent-result.json", "w"), indent=2)
-              print(f"Fallback result: status={result.get('status')}, branch={result.get('branch','')}")
+          # Normalize status
+          if result.get("status", "").lower() in ("success", "done", "completed"):
+              result["status"] = "success"
+
+          json.dump(result, open("/tmp/agent-result.json", "w"), indent=2)
+          print(f"Result: status={result.get('status')}, branch={result.get('branch','')}")
           PYEOF
 
       - name: Push branch and create PR
