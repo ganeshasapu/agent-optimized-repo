@@ -39,11 +39,12 @@ jobs:
         run: |
           source scripts/lib/linear.sh
           ISSUE_ID="${{ github.event.client_payload.issue_id }}"
+          # Set issue_id output immediately so later steps can use it even if fetch fails
+          echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
           TICKET_JSON=$(linear_get_issue "$ISSUE_ID")
           echo "$TICKET_JSON" > /tmp/ticket.json
           IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
           echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
-          echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Build agent prompt
         id: prompt
@@ -139,7 +140,7 @@ jobs:
             linear_add_comment "$ISSUE_ID" "Agent timed out after 30 minutes. The ticket may need to be broken into smaller pieces."
           else
             SUMMARY=$(python3 -c "import json; print(json.load(open('/tmp/agent-result.json')).get('summary','Agent did not produce output'))" 2>/dev/null || echo "Agent failed")
-            linear_add_comment "$ISSUE_ID" "Agent failed to complete this ticket.\n\nDetails: ${SUMMARY}"
+            linear_add_comment "$ISSUE_ID" "Agent failed to complete this ticket. Details: ${SUMMARY}"
           fi
 
       - name: Create follow-up tickets
