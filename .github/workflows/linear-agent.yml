@@ -104,6 +104,17 @@ jobs:
           " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
           echo "Found $(wc -l < /tmp/existing-tickets.txt) existing tickets"
 
+      - name: Clean up pre-existing branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.ticket.outputs.branch }}"
+          # Delete local branch if it exists (from a previous run)
+          git branch -D "$BRANCH" 2>/dev/null || true
+          # Delete remote branch so the agent starts fresh
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+          echo "Cleaned up any pre-existing branch: $BRANCH"
+
       - name: Build agent prompt
         run: |
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
