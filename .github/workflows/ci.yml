@@ -75,3 +75,21 @@ jobs:
       - run: pnpm build
       - run: npx playwright install --with-deps chromium
       - run: pnpm test:e2e
+
+  migrate:
+    name: Apply Migrations to Production
+    runs-on: ubuntu-latest
+    needs: [check, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - name: Run migrations
+        run: cd packages/db && npx drizzle-kit migrate

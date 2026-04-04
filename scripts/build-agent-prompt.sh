@@ -86,6 +86,15 @@ ${IMAGE_URLS:-No images attached to this ticket.}
 - Use \`packages/domain-users/\` as the reference example for how domains are structured, how tests are written, and how routes are wired up
 - When creating a new domain, follow the exact patterns in domain-users (package.json, tsconfig.json, vitest.config.ts, eslint.config.js, directory structure)
 
+### Database changes
+If your ticket requires schema changes:
+1. Create/edit schema files in \`packages/db/src/schema/\`
+2. Export new tables from \`packages/db/src/schema/index.ts\`
+3. Generate migration: \`cd packages/db && npx drizzle-kit generate\`
+4. Apply migration: \`cd packages/db && npx drizzle-kit migrate\`
+5. You have a \`DATABASE_URL\` pointing at an isolated Neon branch — safe to test against
+6. Migrations are auto-applied to production when your PR merges
+
 ### Testing requirements
 - Unit tests are required for all new services — mock the DB with \`vi.mock("@biarritz/db", ...)\`
 - Integration tests use \`describe.skipIf(!process.env.DATABASE_URL)\` guard

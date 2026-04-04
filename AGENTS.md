@@ -131,10 +131,29 @@ Large tickets can be automatically broken into smaller sub-tickets:
 - Each sub-ticket is implemented independently by its own agent
 - Linear's built-in auto-close handles parent completion when all children are done
 
+## Database Changes
+
+Agents have a Neon database branch in CI — a fully isolated copy-on-write fork of production. You can create, test, and deploy schema changes autonomously.
+
+### Adding or modifying a table
+1. Create/edit the schema file in `packages/db/src/schema/<table>.ts`
+2. Export it from `packages/db/src/schema/index.ts`
+3. Generate the migration: `cd packages/db && npx drizzle-kit generate`
+4. Apply it to your Neon branch: `cd packages/db && npx drizzle-kit migrate`
+5. Write services and tests that use the new schema
+6. `pnpm agent:verify` will validate the migration applies cleanly
+
+### Rules
+- Never edit generated migration SQL files
+- Always generate migrations after schema changes — don't skip this step
+- Migrations are auto-applied to production when your PR merges to main
+- `DATABASE_URL` is set in your environment — use `getDb()` from `@biarritz/db`
+
 ## Rules for Agents
 
 - **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`
-- **Do not modify shared packages** (`packages/db`, `packages/ui`, `packages/shared`) without explicit instruction
+- **Database changes are allowed**: You MAY modify `packages/db/src/schema/` and generate migrations when your ticket requires schema changes
+- **Do not modify UI or shared packages** (`packages/ui`, `packages/shared`) without explicit instruction
 - **Run `pnpm agent:check`** after every significant change
 - **Run `pnpm agent:verify`** before submitting work
 - **Never commit `.env.local`** or `.neon-branch-id`
