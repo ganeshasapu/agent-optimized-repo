@@ -7,9 +7,13 @@ export default async function UsersPage() {
   const users = await userService.list();
 
   return (
-    <main className="container mx-auto py-8">
-      <h1 className="mb-8 text-3xl font-bold">Users</h1>
-      <UserList users={users} />
-    </main>
+    <div className="flex flex-col h-full">
+      <header className="page-header">
+        <h1 className="text-sm font-medium">Users</h1>
+      </header>
+      <div className="flex-1 overflow-y-auto">
+        <UserList users={users} />
+      </div>
+    </div>
   );
 }
