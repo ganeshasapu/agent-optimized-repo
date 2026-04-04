@@ -104,16 +104,16 @@ jobs:
           " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
           echo "Found $(wc -l < /tmp/existing-tickets.txt) existing tickets"
 
-      - name: Clean up pre-existing branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare branch for agent
         run: |
           BRANCH="${{ steps.ticket.outputs.branch }}"
-          # Delete local branch if it exists (from a previous run)
-          git branch -D "$BRANCH" 2>/dev/null || true
-          # Delete remote branch so the agent starts fresh
-          git push origin --delete "$BRANCH" 2>/dev/null || true
-          echo "Cleaned up any pre-existing branch: $BRANCH"
+          # Delete any local branch left over from a previous run or remote fetch.
+          # This ensures the agent can `git checkout -b $BRANCH` cleanly.
+          # The remote branch (if any) is left intact — force-push later overwrites it.
+          git branch -D "$BRANCH" 2>/dev/null && echo "Deleted local branch: $BRANCH" || true
+          # Also remove the remote-tracking ref so `git checkout` doesn't auto-create
+          # a local tracking branch from the old remote branch.
+          git update-ref -d "refs/remotes/origin/$BRANCH" 2>/dev/null || true
 
       - name: Build agent prompt
         run: |
