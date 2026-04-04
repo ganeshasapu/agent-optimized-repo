@@ -9,7 +9,7 @@ env:
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
   LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
   NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-  NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
 
 jobs:
   agent:
