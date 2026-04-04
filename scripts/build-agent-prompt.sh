@@ -42,7 +42,6 @@ SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 
 # Read repo context
 CLAUDE_MD=$(cat "${REPO_ROOT}/CLAUDE.md")
 AGENTS_MD=$(cat "${REPO_ROOT}/AGENTS.md")
-
 # Read existing tickets if available
 EXISTING_TICKETS=""
 if [[ -f /tmp/existing-tickets.txt ]] && [[ -s /tmp/existing-tickets.txt ]]; then
@@ -76,9 +75,10 @@ ${IMAGE_URLS:-No images attached to this ticket.}
 
 ### Implementation
 1. Create a branch named linear/${ISSUE_ID}-${SLUG}
-2. Implement the work described in the ticket
-3. If the ticket is vague, use your best judgment — prefer small, focused changes
-4. Run \`pnpm agent:verify\` before finishing — all checks must pass
+2. Read DESIGN.md before writing any UI code — it is the visual source of truth
+3. Implement the work described in the ticket
+4. If the ticket is vague, use your best judgment — prefer small, focused changes
+5. Run \`pnpm agent:verify\` before finishing — all checks must pass
 
 ### How to learn the codebase
 - Read CLAUDE.md and AGENTS.md at the repo root for overall conventions
@@ -99,6 +99,23 @@ ${IMAGE_URLS:-No images attached to this ticket.}
 - Validate all user input with Zod schemas in \`src/lib/validations.ts\`
 - Use \`type\` imports for types: \`import type { Foo } from "./bar"\`
 - Use extensionless relative imports: \`"./utils"\` not \`"./utils.js"\`
+
+### Visual quality — MANDATORY for any UI change
+Read DESIGN.md thoroughly before writing any component. Follow it exactly. Key rules:
+- All colors MUST come from design tokens (e.g. \`bg-primary\`, \`text-muted-foreground\`). Never use arbitrary hex/oklch values.
+- All icons MUST use \`lucide-react\`. Never hand-write SVG.
+- Font sizes: use the Linear-inspired scale from DESIGN.md (13px body, 14px titles). Never use text-xl or larger in app UI.
+- Border radius: \`rounded-md\` max. Never use \`rounded-xl\` or larger.
+- Follow the layout patterns in DESIGN.md exactly (page header, list pages, detail pages, forms).
+
+### Self-review checklist (complete before finishing)
+Before writing your output JSON, verify every item:
+1. All Tailwind class names resolve — no invented classes (e.g. \`bg-violet-muted\` does not exist)
+2. Every icon uses \`lucide-react\`, no inline \`<svg>\` elements
+3. Colors come from design tokens only — no arbitrary \`bg-[#xxx]\` or custom CSS variables
+4. Used \`@biarritz/ui\` components for all standard UI elements
+5. Font sizes follow DESIGN.md scale — no \`text-xl\` or larger in app UI
+6. Changes are scoped to what the ticket asked — no unrequested layout overhauls
 
 ### PR Description
 When you are done, write a file called \`/tmp/pr-description.md\` with this format:
@@ -133,6 +150,12 @@ These tickets already exist in Linear — do NOT create duplicates:
 ${EXISTING_TICKETS:-No existing tickets found.}
 
 ## Repo Context
+
+### DESIGN.md
+DESIGN.md is at the repository root. Read it with the Read tool before any UI work.
+It documents: the design system defined in \`packages/config-tailwind/preset.ts\`, utility classes
+(page-header, nav-item, list-row, section-heading), typography scale, layout patterns, and
+anti-patterns to avoid. Do NOT guess styles — the source of truth is in the code.
 
 ### CLAUDE.md
 ${CLAUDE_MD}

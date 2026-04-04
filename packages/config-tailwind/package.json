@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    "./tailwind.config": "./tailwind.config.ts"
+    "./preset": "./preset.ts"
   },
-  "devDependencies": {
+  "dependencies": {
     "tailwindcss": "^4.2.2"
   }
 }
