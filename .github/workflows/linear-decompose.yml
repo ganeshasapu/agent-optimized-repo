@@ -1,0 +1,274 @@
+name: Ticket Decomposition Agent
+
+on:
+  repository_dispatch:
+    types: [linear-decompose]
+
+env:
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+  LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
+  LINEAR_STATUS_DECOMPOSED: ${{ vars.LINEAR_STATUS_DECOMPOSED }}
+  LINEAR_STATUS_TODO: ${{ vars.LINEAR_STATUS_TODO }}
+
+jobs:
+  decompose:
+    name: Decompose Linear Ticket
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch full ticket from Linear
+        id: ticket
+        run: |
+          ISSUE_ID="${{ github.event.client_payload.issue_id }}"
+          echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
+
+          # Fetch ticket with children info to detect re-decomposition
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description priority state { name } labels { nodes { id name } } comments { nodes { body user { name } } } children { nodes { id identifier title } } } }'}))")
+
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          TICKET_JSON=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)['data']['issue']
+          print(json.dumps(data, indent=2))
+          ")
+          echo "$TICKET_JSON" > /tmp/ticket.json
+
+          IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
+          TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
+          echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+
+          # Check if already decomposed (has children)
+          HAS_CHILDREN=$(echo "$TICKET_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          children = data.get('children', {}).get('nodes', [])
+          print('true' if children else 'false')
+          ")
+          echo "has_children=$HAS_CHILDREN" >> "$GITHUB_OUTPUT"
+
+          if [[ "$HAS_CHILDREN" == "true" ]]; then
+            echo "Ticket already has sub-issues, skipping decomposition"
+          fi
+
+      - name: Build codebase context
+        if: steps.ticket.outputs.has_children != 'true'
+        run: |
+          # Build a summary of the codebase structure for the decomposition agent
+          python3 -c "
+          import os, json
+
+          context = {}
+
+          # Domain packages
+          domains = {}
+          pkg_dir = 'packages'
+          if os.path.isdir(pkg_dir):
+              for entry in sorted(os.listdir(pkg_dir)):
+                  if entry.startswith('domain-'):
+                      domain_path = os.path.join(pkg_dir, entry)
+                      domain_info = {'routes': [], 'services': [], 'components': []}
+                      for subdir in ['src/routes', 'src/services', 'src/components']:
+                          full = os.path.join(domain_path, subdir)
+                          if os.path.isdir(full):
+                              domain_info[subdir.split('/')[-1]] = os.listdir(full)
+                      # Read domain CLAUDE.md if exists
+                      claude_path = os.path.join(domain_path, 'CLAUDE.md')
+                      if os.path.exists(claude_path):
+                          with open(claude_path) as f:
+                              domain_info['claude_md'] = f.read()
+                      domains[entry] = domain_info
+
+          context['domains'] = domains
+
+          # DB schema files
+          schema_dir = 'packages/db/src/schema'
+          if os.path.isdir(schema_dir):
+              context['db_schemas'] = [f for f in os.listdir(schema_dir) if f.endswith('.ts')]
+
+          # Shared package exports
+          shared_index = 'packages/shared/src/index.ts'
+          if os.path.exists(shared_index):
+              with open(shared_index) as f:
+                  context['shared_exports'] = f.read()
+
+          print(json.dumps(context, indent=2))
+          " > /tmp/codebase-context.json
+
+      - name: Build decomposition prompt
+        if: steps.ticket.outputs.has_children != 'true'
+        run: |
+          bash scripts/build-decompose-prompt.sh /tmp/ticket.json /tmp/codebase-context.json > /tmp/decompose-prompt.txt
+          echo "Prompt size: $(wc -c < /tmp/decompose-prompt.txt) bytes"
+
+      - name: Install Claude Code
+        if: steps.ticket.outputs.has_children != 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Run decomposition agent
+        if: steps.ticket.outputs.has_children != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          PROMPT=$(cat /tmp/decompose-prompt.txt)
+          claude -p "$PROMPT" \
+            --allowedTools "Read,Glob,Grep" \
+            --output-format text \
+            > /tmp/decompose-output.txt 2>&1 || true
+
+          echo "Decomposition output: $(wc -c < /tmp/decompose-output.txt) bytes"
+
+      - name: Create sub-tickets
+        if: steps.ticket.outputs.has_children != 'true'
+        run: |
+          source scripts/lib/linear.sh
+
+          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+
+          python3 - "$ISSUE_ID" "$IDENTIFIER" "$LINEAR_TEAM_ID" << 'PYEOF'
+          import json, re, subprocess, os, sys
+
+          issue_id = sys.argv[1]
+          identifier = sys.argv[2]
+          team_id = sys.argv[3]
+
+          text = open("/tmp/decompose-output.txt").read()
+
+          # Parse JSON from the agent output
+          pattern = r'```json\s*(\{.*?\})\s*```'
+          match = re.search(pattern, text, re.DOTALL)
+
+          if not match:
+              print("No structured output found from decomposition agent")
+              sys.exit(0)
+
+          try:
+              result = json.loads(match.group(1))
+          except json.JSONDecodeError as e:
+              print(f"Failed to parse JSON: {e}")
+              sys.exit(0)
+
+          decision = result.get("decision", "skip")
+          if decision == "skip":
+              reason = result.get("reason", "No reason given")
+              print(f"Agent decided not to decompose: {reason}")
+              with open("/tmp/created-count.txt", "w") as f:
+                  f.write("0")
+              sys.exit(0)
+
+          sub_tickets = result.get("sub_tickets", [])
+          if not sub_tickets:
+              print("No sub-tickets proposed")
+              with open("/tmp/created-count.txt", "w") as f:
+                  f.write("0")
+              sys.exit(0)
+
+          if not team_id:
+              print("LINEAR_TEAM_ID not set")
+              sys.exit(1)
+
+          created = []
+          for i, ticket in enumerate(sub_tickets[:8]):
+              title = ticket.get("title", "")
+              desc = ticket.get("description", "")
+              domain = ticket.get("domain", "")
+              order = ticket.get("order", i + 1)
+              deps = ticket.get("depends_on", [])
+
+              # Build description with metadata
+              full_desc = f"Parent: {identifier}\n"
+              full_desc += f"Order: {order}/{len(sub_tickets)}\n"
+              if domain:
+                  full_desc += f"Domain: {domain}\n"
+              if deps:
+                  full_desc += f"Dependencies: {', '.join(str(d) for d in deps)}\n"
+              full_desc += f"\n---\n\n{desc}"
+
+              print(f"Creating sub-ticket {order}: {title}")
+
+              proc = subprocess.run(
+                  ["bash", "-c",
+                   f'source scripts/lib/linear.sh && linear_create_sub_issue "{team_id}" "{issue_id}" "{title}" "{full_desc}"'],
+                  capture_output=True, text=True,
+                  env=os.environ
+              )
+              if proc.returncode == 0:
+                  created.append({"title": title, "output": proc.stdout.strip()})
+                  print(f"  Created: {proc.stdout.strip()}")
+              else:
+                  print(f"  Failed: {proc.stderr}")
+
+          print(f"Created {len(created)} sub-tickets")
+          with open("/tmp/created-count.txt", "w") as f:
+              f.write(str(len(created)))
+          PYEOF
+
+      - name: Update parent ticket
+        if: always() && steps.ticket.outputs.has_children != 'true'
+        run: |
+          source scripts/lib/linear.sh
+          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
+          CREATED=$(cat /tmp/created-count.txt 2>/dev/null || echo "0")
+
+          if [[ "$CREATED" -gt 0 ]]; then
+            # Move parent to "Decomposed" status
+            if [[ -n "$LINEAR_STATUS_DECOMPOSED" ]]; then
+              linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_DECOMPOSED" || true
+            fi
+            linear_add_comment "$ISSUE_ID" "Decomposed into ${CREATED} sub-tickets. Sub-tickets will be set to Todo to trigger implementation agents." || true
+          else
+            linear_add_comment "$ISSUE_ID" "Decomposition agent ran but did not create sub-tickets. This ticket may not need decomposition — consider moving it directly to Todo." || true
+          fi
+
+      - name: Set sub-tickets to Todo
+        if: steps.ticket.outputs.has_children != 'true'
+        run: |
+          source scripts/lib/linear.sh
+
+          if [[ -z "$LINEAR_STATUS_TODO" ]]; then
+            echo "LINEAR_STATUS_TODO not set, sub-tickets will need manual triggering"
+            exit 0
+          fi
+
+          CREATED=$(cat /tmp/created-count.txt 2>/dev/null || echo "0")
+          if [[ "$CREATED" == "0" ]]; then
+            echo "No sub-tickets to trigger"
+            exit 0
+          fi
+
+          # Fetch the parent's children (just created)
+          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { children { nodes { id identifier title } } } }'}))")
+
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          # Move each child to Todo status with a delay to stagger agent triggers
+          echo "$RESPONSE" | python3 -c "
+          import sys, json, subprocess, os, time
+          data = json.load(sys.stdin)['data']['issue']['children']['nodes']
+          todo_status = os.environ.get('LINEAR_STATUS_TODO', '')
+          for child in data:
+              print(f\"Setting {child['identifier']} to Todo...\")
+              subprocess.run(
+                  ['bash', '-c', f'source scripts/lib/linear.sh && linear_update_issue_status \"{child[\"id\"]}\" \"{todo_status}\"'],
+                  check=False,
+                  env=os.environ
+              )
+              time.sleep(2)  # Stagger to avoid firing all agents simultaneously
+          print(f'Set {len(data)} sub-tickets to Todo')
+          " || true

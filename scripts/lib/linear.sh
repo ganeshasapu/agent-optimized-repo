@@ -121,6 +121,28 @@ print(json.dumps(issue))
 "
 }
 
+linear_create_sub_issue() {
+  local team_id="$1"
+  local parent_id="$2"
+  local title="$3"
+  local description="$4"
+
+  log_info "Creating sub-issue: $title (parent: $parent_id)"
+
+  local escaped_title
+  escaped_title=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$title")
+  local escaped_desc
+  escaped_desc=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$description")
+
+  local response
+  response=$(linear_gql "mutation { issueCreate(input: { teamId: \"${team_id}\", parentId: \"${parent_id}\", title: \"${escaped_title}\", description: \"${escaped_desc}\", priority: 3 }) { success issue { id identifier url } } }") || return 1
+  echo "$response" | python3 -c "
+import sys, json
+issue = json.load(sys.stdin)['data']['issueCreate']['issue']
+print(json.dumps(issue))
+"
+}
+
 linear_get_states() {
   local team_id="$1"
   log_info "Fetching workflow states for team $team_id"
