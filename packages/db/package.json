@@ -1,0 +1,29 @@
+{
+  "name": "@biarritz/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "@neondatabase/serverless": "^1.0.2"
+  },
+  "devDependencies": {
+    "@biarritz/config-typescript": "workspace:*",
+    "@biarritz/config-eslint": "workspace:*",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.7.0",
+    "eslint": "^9.0.0"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "biarritz",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "agent:setup": "bash scripts/agent-setup.sh",
+    "agent:verify": "bash scripts/agent-verify.sh",
+    "agent:teardown": "bash scripts/agent-teardown.sh",
+    "agent:check": "bash scripts/agent-check.sh",
+    "db:generate": "turbo run db:generate --filter=@biarritz/db",
+    "db:migrate": "turbo run db:migrate --filter=@biarritz/db",
+    "db:studio": "turbo run db:studio --filter=@biarritz/db"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.3",
+    "prettier": "^3.8.1"
+  },
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=22"
+  }
+}
