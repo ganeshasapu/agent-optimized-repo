@@ -37,14 +37,29 @@ jobs:
       - name: Fetch full ticket from Linear
         id: ticket
         run: |
-          source scripts/lib/linear.sh
           ISSUE_ID="${{ github.event.client_payload.issue_id }}"
-          # Set issue_id output immediately so later steps can use it even if fetch fails
           echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
-          TICKET_JSON=$(linear_get_issue "$ISSUE_ID")
+          echo "Fetching issue: $ISSUE_ID"
+
+          # Call Linear API directly for debugging
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description priority state { name } labels { nodes { name } } comments { nodes { body user { name } } } } }'}))")
+          echo "Payload: $PAYLOAD"
+
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          echo "Raw response: $RESPONSE"
+
+          TICKET_JSON=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)['data']['issue']
+          print(json.dumps(data, indent=2))
+          ")
           echo "$TICKET_JSON" > /tmp/ticket.json
           IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
           echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "Fetched ticket: $IDENTIFIER"
 
       - name: Build agent prompt
         id: prompt
