@@ -49,6 +49,12 @@ if [[ -f /tmp/existing-tickets.txt ]] && [[ -s /tmp/existing-tickets.txt ]]; the
   EXISTING_TICKETS=$(cat /tmp/existing-tickets.txt)
 fi
 
+# Check for downloaded images
+IMAGE_FILES=""
+if [[ -d /tmp/ticket-images ]] && [[ "$(ls -A /tmp/ticket-images 2>/dev/null)" ]]; then
+  IMAGE_FILES=$(ls -1 /tmp/ticket-images/)
+fi
+
 cat <<PROMPT
 You are working on the Biarritz codebase.
 You have been assigned a Linear ticket to implement.
@@ -61,6 +67,10 @@ You have been assigned a Linear ticket to implement.
 - Priority: ${PRIORITY}
 - Comments:
 ${COMMENTS}
+
+## Attached Images
+${IMAGE_FILES:+The ticket includes images that have been downloaded to /tmp/ticket-images/. Use the Read tool to view them — they contain visual context for this ticket (mockups, screenshots, designs, etc.):}
+${IMAGE_FILES:-No images attached to this ticket.}
 
 ## Instructions
 
