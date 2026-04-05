@@ -125,17 +125,18 @@ PROMPT_EOF
         if: steps.guard.outputs.should_run == 'true'
         run: npm install -g @anthropic-ai/claude-code@latest
 
-      - name: Run revision agent
+      - name: Authenticate Claude
         if: steps.guard.outputs.should_run == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_REFRESH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_REFRESH_TOKEN }}
+          CLAUDE_CODE_OAUTH_SCOPES: "user:file_upload user:inference user:mcp_servers user:profile user:sessions:claude_code"
+        run: claude auth login
+
+      - name: Dispatch revision agent
+        if: steps.guard.outputs.should_run == 'true'
         run: |
           PROMPT=$(cat /tmp/revision-prompt.txt)
-          claude -p "$PROMPT" \
-            --dangerously-skip-permissions \
-            --output-format text \
-            > /tmp/revision-output.txt 2>&1 || true
-          echo "Revision output: $(wc -c < /tmp/revision-output.txt) bytes"
+          claude remote "$PROMPT"
 
       - name: Track revision count
         if: steps.guard.outputs.should_run == 'true'

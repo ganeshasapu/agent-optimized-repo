@@ -98,10 +98,13 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@latest
 
-      - name: Dispatch remote agent
+      - name: Authenticate Claude
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_REFRESH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_REFRESH_TOKEN }}
+          CLAUDE_CODE_OAUTH_SCOPES: "user:file_upload user:inference user:mcp_servers user:profile user:sessions:claude_code"
+        run: claude auth login
+
+      - name: Dispatch remote agent
         run: |
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          # Use 'remote' as subcommand (not --remote flag)
-          timeout 60 claude remote "$PROMPT" 2>&1 || echo "Exit: $?"
+          claude remote "$PROMPT"
