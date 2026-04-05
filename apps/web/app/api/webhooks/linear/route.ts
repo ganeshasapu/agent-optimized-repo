@@ -5,7 +5,6 @@ const LINEAR_WEBHOOK_SECRET = process.env.LINEAR_WEBHOOK_SECRET ?? "";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "";
 const LINEAR_TRIGGER_STATUS = process.env.LINEAR_TRIGGER_STATUS ?? "Todo";
-const LINEAR_DECOMPOSE_STATUS = process.env.LINEAR_DECOMPOSE_STATUS ?? "Decompose";
 
 function verifySignature(body: string, signature: string): boolean {
   const hmac = createHmac("sha256", LINEAR_WEBHOOK_SECRET);
@@ -67,13 +66,9 @@ async function dispatchToGitHub(
 
 function handleIssueEvent(payload: LinearIssuePayload): { eventType: string; clientPayload: Record<string, unknown> } | { ignored: true; reason: string } {
   const currentStatus = payload.data.state?.name;
-  let eventType: string;
-  if (currentStatus === LINEAR_TRIGGER_STATUS) {
-    eventType = "linear-ticket";
-  } else if (currentStatus === LINEAR_DECOMPOSE_STATUS) {
-    eventType = "linear-decompose";
-  } else {
-    return { ignored: true, reason: `status is "${currentStatus}", not "${LINEAR_TRIGGER_STATUS}" or "${LINEAR_DECOMPOSE_STATUS}"` };
+
+  if (currentStatus !== LINEAR_TRIGGER_STATUS) {
+    return { ignored: true, reason: `status is "${currentStatus}", not "${LINEAR_TRIGGER_STATUS}"` };
   }
 
   if (payload.action !== "create" && !payload.updatedFrom?.stateId) {
@@ -81,7 +76,7 @@ function handleIssueEvent(payload: LinearIssuePayload): { eventType: string; cli
   }
 
   return {
-    eventType,
+    eventType: "linear-ticket",
     clientPayload: {
       issue_id: payload.data.id,
       title: payload.data.title,
