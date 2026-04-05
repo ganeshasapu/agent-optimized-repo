@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Check if this is an agent PR
@@ -59,9 +59,11 @@ jobs:
             exit 0
           fi
 
+          NEXT_REVISION=$((REVISION_COUNT + 1))
           echo "should_run=true" >> "$GITHUB_OUTPUT"
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "next_revision=$NEXT_REVISION" >> "$GITHUB_OUTPUT"
 
       - name: Extract ticket identifier from branch
         if: steps.guard.outputs.should_run == 'true'
@@ -77,11 +79,11 @@ jobs:
         id: reviews
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           PR_NUMBER="${{ steps.guard.outputs.pr_number }}"
           REVIEW_ID="${{ github.event.review.id }}"
 
-          REVIEW_BODY="${{ github.event.review.body }}"
           echo "$REVIEW_BODY" > /tmp/review-body.txt
 
           gh api \
@@ -98,24 +100,24 @@ jobs:
           REVIEW_COMMENTS=$(cat /tmp/review-comments.txt)
 
           cat > /tmp/revision-prompt.txt <<PROMPT_EOF
-          You are addressing review feedback on a pull request.
+You are addressing review feedback on a pull request.
 
-          ## Ticket
-          - ID: ${IDENTIFIER}
+## Ticket
+- ID: ${IDENTIFIER}
 
-          ## Branch
-          ${BRANCH}
+## Branch
+${BRANCH}
 
-          ## Review Feedback
+## Review Feedback
 
-          ### Reviewer's Summary
-          ${REVIEW_BODY}
+### Reviewer's Summary
+${REVIEW_BODY}
 
-          ### Inline Comments
-          ${REVIEW_COMMENTS}
+### Inline Comments
+${REVIEW_COMMENTS}
 
-          Read AGENTS.md (section: "Addressing Review Feedback") for full instructions.
-          PROMPT_EOF
+Read AGENTS.md (section: "Addressing Review Feedback") for full instructions.
+PROMPT_EOF
 
           echo "Revision prompt: $(wc -c < /tmp/revision-prompt.txt) bytes"
 
@@ -128,3 +130,12 @@ jobs:
           PROMPT=$(cat /tmp/revision-prompt.txt)
           claude --remote "$PROMPT"
           echo "Remote revision agent dispatched"
+
+      - name: Track revision count
+        if: steps.guard.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.guard.outputs.pr_number }}"
+          NEXT_REVISION="${{ steps.guard.outputs.next_revision }}"
+          gh pr edit "$PR_NUMBER" --add-label "agent-revision-${NEXT_REVISION}" 2>/dev/null || true

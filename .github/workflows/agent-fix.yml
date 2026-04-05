@@ -27,9 +27,10 @@ jobs:
 
       - name: Fetch ticket from Linear
         id: ticket
+        env:
+          ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+          INSTRUCTIONS: ${{ github.event.client_payload.instructions }}
         run: |
-          ISSUE_ID="${{ github.event.client_payload.issue_id }}"
-          INSTRUCTIONS="${{ github.event.client_payload.instructions }}"
           echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
 
           PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description } }'}))")
@@ -47,8 +48,9 @@ jobs:
           echo "$TICKET_JSON" > /tmp/ticket.json
 
       - name: Build fix prompt
+        env:
+          INSTRUCTIONS: ${{ github.event.client_payload.instructions }}
         run: |
-          INSTRUCTIONS="${{ github.event.client_payload.instructions }}"
           bash scripts/build-fix-prompt.sh /tmp/ticket.json "$INSTRUCTIONS" > /tmp/fix-prompt.txt
           echo "Fix prompt: $(wc -c < /tmp/fix-prompt.txt) bytes"
 
