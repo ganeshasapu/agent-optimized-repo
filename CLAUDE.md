@@ -103,7 +103,8 @@ Each domain (`packages/domain-*`) is a self-contained feature boundary:
 
 ### Database
 - All schema changes go in `packages/db/src/schema/`
-- After schema changes: `pnpm db:generate` then `pnpm db:migrate`
+- After schema changes: `cd packages/db && npx drizzle-kit generate` then `cd packages/db && npx drizzle-kit migrate`
+- Do NOT use `pnpm db:generate` / `pnpm db:migrate` — they don't pass `DATABASE_URL` in CI
 - Never modify existing migration files
 - Use `getDb()` from `@biarritz/db` — never construct clients directly
 
