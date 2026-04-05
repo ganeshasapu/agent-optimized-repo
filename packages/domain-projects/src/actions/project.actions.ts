@@ -8,6 +8,7 @@ import { createProjectSchema } from "../lib/validations";
 export async function createProjectAction(formData: FormData) {
   const raw = {
     name: formData.get("name") as string,
+    identifier: formData.get("identifier") as string,
     description: (formData.get("description") as string) || undefined,
     ownerId: formData.get("ownerId") as string,
   };
