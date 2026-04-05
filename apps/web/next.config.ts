@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     "@biarritz/db",
     "@biarritz/shared",
     "@biarritz/domain-users",
+    "@biarritz/domain-projects",
   ],
 };
 

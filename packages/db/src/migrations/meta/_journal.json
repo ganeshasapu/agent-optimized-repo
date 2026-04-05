@@ -8,6 +8,13 @@
       "when": 1775331087286,
       "tag": "0000_late_blackheart",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775333673633,
+      "tag": "0001_normal_the_phantom",
+      "breakpoints": true
     }
   ]
 }
