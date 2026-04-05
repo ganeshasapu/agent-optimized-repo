@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { User } from "../types/index";
+import { formatRelativeDate } from "../lib/date-utils";
 
 interface UserListProps {
   users: User[];
@@ -22,7 +23,8 @@ export function UserList({ users }: UserListProps) {
     <div>
       <div className="section-heading px-4 py-1.5 border-b flex items-center">
         <span>Name</span>
-        <span className="ml-auto">Email</span>
+        <span className="ml-auto mr-32">Email</span>
+        <span>Joined</span>
       </div>
       <div className="divide-y">
         {users.map((user) => (
@@ -30,8 +32,11 @@ export function UserList({ users }: UserListProps) {
             <span className="font-medium text-foreground truncate">
               {user.name ?? "Unnamed"}
             </span>
-            <span className="text-muted-foreground ml-auto text-xs">
+            <span className="text-muted-foreground ml-auto mr-32 text-xs">
               {user.email}
+            </span>
+            <span className="text-muted-foreground text-xs">
+              {formatRelativeDate(user.createdAt)}
             </span>
           </Link>
         ))}
