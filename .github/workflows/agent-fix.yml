@@ -66,4 +66,4 @@ jobs:
       - name: Dispatch fix agent
         run: |
           PROMPT=$(cat /tmp/fix-prompt.txt)
-          claude remote "$PROMPT"
+          claude --remote "$PROMPT"
