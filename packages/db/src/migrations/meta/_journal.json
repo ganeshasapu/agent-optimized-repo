@@ -15,6 +15,13 @@
       "when": 1775333673633,
       "tag": "0001_normal_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775351187110,
+      "tag": "0002_acoustic_medusa",
+      "breakpoints": true
     }
   ]
 }
