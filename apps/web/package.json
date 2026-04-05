@@ -19,6 +19,7 @@
     "@biarritz/shared": "workspace:*",
     "@biarritz/domain-users": "workspace:*",
     "@biarritz/domain-projects": "workspace:*",
+    "@biarritz/domain-tasks": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "@neondatabase/serverless": "^1.0.2",
     "zod": "^3.25.0"
