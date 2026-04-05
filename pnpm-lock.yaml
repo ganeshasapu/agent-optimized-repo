@@ -23,6 +23,9 @@ importers:
       '@biarritz/domain-projects':
         specifier: workspace:*
         version: link:../../packages/domain-projects
+      '@biarritz/domain-tasks':
+        specifier: workspace:*
+        version: link:../../packages/domain-tasks
       '@biarritz/domain-users':
         specifier: workspace:*
         version: link:../../packages/domain-users
@@ -150,6 +153,58 @@ importers:
       lucide-react:
         specifier: ^0.488.0
         version: 0.488.0(react@19.2.4)
+      next:
+        specifier: ^15.0.0
+        version: 15.5.14(@playwright/test@1.59.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.4(react@19.2.4)
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
+    devDependencies:
+      '@biarritz/config-eslint':
+        specifier: workspace:*
+        version: link:../config-eslint
+      '@biarritz/config-typescript':
+        specifier: workspace:*
+        version: link:../config-typescript
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.14)
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.6.1)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.1
+        version: 3.2.4(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  packages/domain-tasks:
+    dependencies:
+      '@biarritz/db':
+        specifier: workspace:*
+        version: link:../db
+      '@biarritz/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@biarritz/ui':
+        specifier: workspace:*
+        version: link:../ui
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@neondatabase/serverless@1.0.2)(@types/pg@8.20.0)
+      lucide-react:
+        specifier: ^0.511.0
+        version: 0.511.0(react@19.2.4)
       next:
         specifier: ^15.0.0
         version: 15.5.14(@playwright/test@1.59.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -2862,6 +2917,11 @@ packages:
 
   lucide-react@0.488.0:
     resolution: {integrity: sha512-ronlL0MyKut4CEzBY/ai2ZpKPxyWO4jUqdAkm2GNK5Zn3Rj+swDz+3lvyAUXN0PNqPKIX6XM9Xadwz/skLs/pQ==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  lucide-react@0.511.0:
+    resolution: {integrity: sha512-VK5a2ydJ7xm8GvBeKLS9mu1pVK6ucef9780JVUjw6bAjJL/QXnd4Y0p7SPeOUMC27YhzNCZvm5d/QX0Tp3rc0w==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
@@ -5860,6 +5920,10 @@ snapshots:
   loupe@3.2.1: {}
 
   lucide-react@0.488.0(react@19.2.4):
+    dependencies:
+      react: 19.2.4
+
+  lucide-react@0.511.0(react@19.2.4):
     dependencies:
       react: 19.2.4
 
