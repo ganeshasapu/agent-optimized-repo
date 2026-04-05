@@ -136,7 +136,7 @@ PROMPT_EOF
         if: steps.guard.outputs.should_run == 'true'
         run: |
           PROMPT=$(cat /tmp/revision-prompt.txt)
-          claude remote "$PROMPT"
+          claude --remote "$PROMPT"
 
       - name: Track revision count
         if: steps.guard.outputs.should_run == 'true'

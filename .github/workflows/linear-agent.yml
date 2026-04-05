@@ -107,4 +107,4 @@ jobs:
       - name: Dispatch remote agent
         run: |
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          claude remote "$PROMPT"
+          claude --remote "$PROMPT"
