@@ -28,17 +28,14 @@
 - `pnpm --filter=@biarritz/web dev` — Dev server for web only
 
 ### Linear Integration
-- Linear tickets trigger agents via webhook → GitHub Actions → `claude -p`
+- Linear tickets trigger agents via webhook → GitHub Actions → `claude --remote`
 - Webhook endpoint: `apps/web/app/api/webhooks/linear/route.ts`
-- Agent workflow: `.github/workflows/linear-agent.yml`
-- Linear API helpers: `scripts/lib/linear.sh`
-- Prompt builder: `scripts/build-agent-prompt.sh`
-- To list your team's workflow state IDs: `source scripts/lib/linear.sh && linear_get_states "$LINEAR_TEAM_ID"`
-- Automated reviewer: runs after PR creation in `linear-agent.yml`, posts advisory review
+- Dispatch workflows: `.github/workflows/linear-agent.yml`, `.github/workflows/agent-fix.yml`
+- Event-driven workflows: `.github/workflows/agent-pr-opened.yml`, `.github/workflows/agent-pr-closed.yml`
 - Agent revision: `.github/workflows/agent-revision.yml` — auto-addresses "changes requested" review feedback on agent PRs (max 2 revisions)
-- Ticket decomposition: `.github/workflows/linear-decompose.yml` — move ticket to "Decompose" status to break into sub-tickets
-- Decomposition prompt: `scripts/build-decompose-prompt.sh`
-- Reviewer prompt: `scripts/build-reviewer-prompt.sh`
+- Prompt builders: `scripts/build-agent-prompt.sh`, `scripts/build-fix-prompt.sh`, `scripts/build-reviewer-prompt.sh`
+- Linear API helpers: `scripts/lib/linear.sh`
+- Agents run autonomously via `claude --remote` — they read AGENTS.md from the repo for all workflow instructions
 
 ## Architecture
 
