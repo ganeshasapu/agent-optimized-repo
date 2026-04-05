@@ -74,11 +74,17 @@ ${IMAGE_URLS:-No images attached to this ticket.}
 ## Instructions
 
 ### Implementation
-1. Create a branch named linear/${ISSUE_ID}-${SLUG}
+1. Create a branch: \`git checkout -b linear/${ISSUE_ID}-${SLUG}\`
 2. Read DESIGN.md before writing any UI code — it is the visual source of truth
 3. Implement the work described in the ticket
 4. If the ticket is vague, use your best judgment — prefer small, focused changes
 5. Run \`pnpm agent:verify\` before finishing — all checks must pass
+6. **CRITICAL**: You MUST commit your changes before outputting the JSON block:
+   \`\`\`bash
+   git add -A
+   git commit -m "feat(${ISSUE_ID}): <short description of changes>"
+   \`\`\`
+   If you do not commit, your work will be lost. The workflow verifies that at least 1 commit exists on your branch.
 
 ### How to learn the codebase
 - Read CLAUDE.md and AGENTS.md at the repo root for overall conventions

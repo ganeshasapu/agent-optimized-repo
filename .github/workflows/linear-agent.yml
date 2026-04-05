@@ -155,23 +155,28 @@ jobs:
 
           echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
 
-          # Extract status from agent's JSON output block
-          AGENT_STATUS=$(python3 -c "
-          import re, json
-          text = open('/tmp/agent-output.txt').read()
-          pattern = r'\`\`\`json\s*(\{.*?\})\s*\`\`\`'
-          match = re.search(pattern, text, re.DOTALL)
-          if match:
-              try:
-                  result = json.loads(match.group(1))
-                  print(result.get('status', 'unknown'))
-              except json.JSONDecodeError:
-                  print('unknown')
-          else:
-              print('unknown')
-          " 2>/dev/null || echo "unknown")
-          echo "agent_status=$AGENT_STATUS" >> "$GITHUB_OUTPUT"
-          echo "Agent reported status: $AGENT_STATUS"
+          BRANCH="${{ steps.ticket.outputs.branch }}"
+
+          # Determine success based on ACTUAL git state, not self-reported JSON.
+          # The agent MUST have created the branch AND committed at least once.
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
+          else
+            AHEAD="0"
+          fi
+
+          if [[ "$AHEAD" -gt 0 ]]; then
+            echo "agent_status=success" >> "$GITHUB_OUTPUT"
+            echo "Agent created $AHEAD commit(s) on $BRANCH"
+          else
+            echo "agent_status=failed" >> "$GITHUB_OUTPUT"
+            echo "Agent produced 0 commits — treating as failure regardless of self-reported status"
+            # Also check for uncommitted changes (agent edited files but forgot to commit)
+            UNSTAGED=$(git diff --stat 2>/dev/null | tail -1)
+            UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+            echo "Uncommitted changes: ${UNSTAGED:-none}"
+            echo "Untracked files: ${UNTRACKED}"
+          fi
 
       - name: Retry agent on failure
         if: steps.agent.outputs.agent_status == 'failed'
@@ -179,18 +184,20 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DATABASE_URL: ${{ steps.neon.outputs.database_url }}
         run: |
-          echo "Agent reported failure — attempting retry..."
+          echo "Agent failed (0 commits) — attempting retry..."
 
           BRANCH="${{ steps.ticket.outputs.branch }}"
 
-          # Capture what the agent already changed
+          # Capture what the agent already changed (uncommitted work on disk)
+          AGENT_DIFF=""
           if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
             AGENT_DIFF=$(git diff main.."$BRANCH" 2>/dev/null | head -c 15000)
-          else
-            AGENT_DIFF=$(git diff 2>/dev/null | head -c 15000)
           fi
+          # Also capture any uncommitted changes (agent may have edited without committing)
+          UNCOMMITTED_DIFF=$(git diff 2>/dev/null | head -c 10000)
+          UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null | head -20)
 
-          # Capture the error output (last 3000 chars likely contain verify errors)
+          # Capture the error output (last 3000 chars)
           ERROR_TAIL=$(tail -c 3000 /tmp/agent-output.txt)
 
           # Build retry prompt
@@ -198,36 +205,51 @@ jobs:
 
           cat > /tmp/retry-prompt.txt <<RETRY_EOF
           You are retrying a failed implementation attempt.
+          The previous agent ran but FAILED because it did not commit any code to git.
 
           ## Original Task
           ${ORIGINAL_PROMPT}
 
           ## What Was Already Done
-          The previous agent attempt made the following changes (diff against main):
+          The previous agent may have made changes but did NOT commit them.
 
+          Committed diff against main:
           \`\`\`diff
-          ${AGENT_DIFF}
+          ${AGENT_DIFF:-No committed changes.}
           \`\`\`
 
-          ## Error Output
-          The previous attempt failed during verification (\`pnpm agent:verify\`). Here is the error output:
+          Uncommitted changes on disk:
+          \`\`\`diff
+          ${UNCOMMITTED_DIFF:-No uncommitted changes.}
+          \`\`\`
 
+          Untracked files:
+          ${UNTRACKED_FILES:-None}
+
+          ## Previous Agent Output
           \`\`\`
           ${ERROR_TAIL}
           \`\`\`
 
-          ## Retry Instructions
-          1. You are on the same branch the previous agent created. The changes above are already applied.
-          2. Diagnose the verification errors from the error output above.
-          3. Fix the issues — do NOT start over from scratch unless the approach is fundamentally broken.
-          4. Run \`pnpm agent:verify\` again to confirm all checks pass.
-          5. Commit your fixes to the existing branch.
+          ## Retry Instructions — READ CAREFULLY
+          1. If the previous agent left useful uncommitted work, stage and commit it first: \`git add -A && git commit -m "wip: previous agent work"\`
+          2. If the previous agent did nothing useful, start fresh from scratch.
+          3. Implement the full ticket requirements.
+          4. Run \`pnpm agent:verify\` — all checks must pass.
+          5. **CRITICAL**: You MUST commit ALL your changes before outputting the JSON block:
+             \`\`\`bash
+             git add -A
+             git commit -m "feat(\${ISSUE_ID}): <description>"
+             \`\`\`
+             If you do not commit, your work will be LOST and the workflow will fail.
           6. Output the standard JSON block when done.
           RETRY_EOF
 
           # Ensure we are on the agent's branch for the retry
           if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
             git checkout "$BRANCH"
+          else
+            git checkout -b "$BRANCH"
           fi
 
           RETRY_PROMPT=$(cat /tmp/retry-prompt.txt)
@@ -240,6 +262,14 @@ jobs:
 
           # Replace agent output with retry output for downstream steps
           cp /tmp/agent-output-retry.txt /tmp/agent-output.txt
+
+          # Verify the retry actually produced commits
+          AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
+          if [[ "$AHEAD" -gt 0 ]]; then
+            echo "Retry succeeded: $AHEAD commit(s) on $BRANCH"
+          else
+            echo "Retry also failed: still 0 commits on $BRANCH"
+          fi
 
       - name: Check results and push
         id: pr

@@ -210,7 +210,12 @@ jobs:
           4. Do NOT revert unrelated changes or start over — only address the review feedback.
           5. If a comment is unclear or contradictory, use your best judgment and note your interpretation.
           6. Run \`pnpm agent:verify\` before finishing — all checks must pass.
-          7. Commit your changes with a message like "address review feedback for ${IDENTIFIER}".
+          7. **CRITICAL**: You MUST commit your changes before outputting the JSON block:
+             \`\`\`bash
+             git add -A
+             git commit -m "fix(${IDENTIFIER}): address review feedback"
+             \`\`\`
+             If you do not commit, your work will be LOST.
 
           ### Quality Rules
           - Use \`@biarritz/ui\` components — never raw HTML for common patterns

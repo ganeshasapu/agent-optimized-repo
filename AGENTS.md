@@ -81,16 +81,29 @@ When running as a Linear-triggered agent, your final output MUST include this JS
 }
 ```
 
-## CI Failure Retry
+## Committing Your Work
 
-If your implementation fails `pnpm agent:verify`, the workflow will automatically retry once:
+**You MUST commit your changes before outputting the final JSON block.** The workflow determines success by checking for git commits on your branch — not your self-reported status. If you don't commit, all your work is lost.
 
-1. The error output from the failed verification is captured
-2. A retry prompt is built with: original task + your diff + the error output
-3. A second agent run attempts to fix the verification errors
-4. If the retry also fails, the ticket is marked as failed in Linear
+```bash
+git add -A
+git commit -m "feat(TICKET-ID): short description of changes"
+```
 
-This means you should always output a proper status JSON — even on failure — so the workflow can detect and retry.
+The workflow enforces this contract:
+- **1+ commits on branch** → PR is created → success
+- **0 commits on branch** → automatic retry (regardless of what you report in JSON)
+- **0 commits after retry** → ticket marked as failed in Linear
+
+## Automatic Retry
+
+The workflow will automatically retry once if:
+
+1. You produced 0 commits (even if you reported "success" in JSON)
+2. The retry agent receives: original task + any uncommitted changes you left on disk + your output
+3. If the retry also produces 0 commits, the ticket is marked as failed in Linear
+
+Always output a proper status JSON — even on failure — so the workflow can capture diagnostic context.
 
 ## Automated Review
 
