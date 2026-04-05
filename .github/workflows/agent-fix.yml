@@ -7,6 +7,7 @@ on:
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
+  LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
 
 concurrency:
   group: agent-fix-${{ github.event.client_payload.issue_id }}
@@ -327,6 +328,9 @@ jobs:
           fi
 
           if [[ "$AGENT_STATUS" == "success" && "$PUSH_STATUS" == "success" ]]; then
+            if [[ -n "${LINEAR_STATUS_IN_REVIEW:-}" ]]; then
+              linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW" || true
+            fi
             linear_add_comment "$ISSUE_ID" "Fixed: ${AGENT_SUMMARY} — Agent" || true
           elif [[ "$PUSH_STATUS" == "no_changes" ]]; then
             linear_add_comment "$ISSUE_ID" "Agent ran but made no changes. The requested fix may already be applied. — Agent" || true

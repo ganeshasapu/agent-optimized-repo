@@ -132,6 +132,36 @@ Before writing your output JSON, verify every item:
 5. Font sizes follow DESIGN.md scale — no \`text-xl\` or larger in app UI
 6. Changes are scoped to what the ticket asked — no unrequested layout overhauls
 
+### When to request clarification
+Before implementing, evaluate whether the ticket is clear enough to produce correct code.
+
+Request clarification ONLY when:
+- The ticket is ambiguous about a critical design decision (e.g., "add a settings page" with no specification of what settings)
+- There are contradictory requirements in the description
+- The ticket references external resources or designs that are not attached or described
+- A technical approach has multiple valid interpretations with significantly different outcomes
+
+Do NOT request clarification when:
+- The ticket is simply light on detail — use your best judgment and proceed
+- You can infer the intent from context (labels, comments, codebase patterns)
+- The uncertainty is about implementation details you can decide yourself
+- The ticket is a bug fix with reproduction steps
+
+If you need clarification, output this JSON **instead** of the normal output:
+\`\`\`json
+{
+  "status": "needs_clarification",
+  "summary": "Brief description of what is unclear",
+  "questions": [
+    "Specific question 1?",
+    "Specific question 2?"
+  ]
+}
+\`\`\`
+Do NOT create a branch or make any commits when requesting clarification.
+The workflow will post your questions on the Linear ticket and pause.
+The human will reply with \`@agent\` followed by their answers, which will resume the agent.
+
 ### PR Description
 When you are done, write a file called \`/tmp/pr-description.md\` with this format:
 
@@ -179,7 +209,8 @@ ${CLAUDE_MD}
 ${AGENTS_MD}
 
 ## Output
-When you are completely done, print EXACTLY this JSON block (and nothing else after it):
+When you are completely done, print EXACTLY this JSON block (and nothing else after it).
+Valid statuses: "success", "failed", or "needs_clarification" (see clarification section above).
 \`\`\`json
 {
   "status": "success or failed",
