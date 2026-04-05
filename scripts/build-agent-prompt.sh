@@ -2,10 +2,6 @@
 # build-agent-prompt.sh — Build a lean prompt for claude --remote
 # Usage: ./scripts/build-agent-prompt.sh <ticket_json_file>
 # Outputs the prompt to stdout
-#
-# Required env vars:
-#   DATABASE_URL — Neon branch connection string
-#   NEON_BRANCH_ID — Neon branch ID (for PR body cleanup tag)
 
 set -euo pipefail
 
@@ -68,10 +64,8 @@ ${COMMENTS}
 ${IMAGE_URLS:+Download these with curl and use the Read tool to view them:}
 ${IMAGE_URLS:-No images attached.}
 
-## Environment
-- DATABASE_URL: ${DATABASE_URL}
-- Neon branch ID: ${NEON_BRANCH_ID} (include in PR body as \`<!-- neon-branch: ${NEON_BRANCH_ID} -->\`)
-- Branch name: linear/${ISSUE_ID}-${SLUG}
+## Branch
+linear/${ISSUE_ID}-${SLUG}
 
 ## Existing Tickets
 These tickets already exist — do NOT create duplicates:

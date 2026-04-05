@@ -7,8 +7,6 @@ on:
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
-  NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
 
 jobs:
   dispatch:
@@ -79,20 +77,8 @@ jobs:
               print(f\"{issue['identifier']}: {issue['title']} [{issue['state']['name']}]\")
           " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
 
-      - name: Create Neon database branch
-        id: neon
-        run: |
-          source scripts/lib/common.sh
-          source scripts/lib/neon.sh
-          BRANCH_ID="agent-${{ github.run_id }}"
-          DATABASE_URL=$(neon_create_branch "$BRANCH_ID")
-          echo "database_url=$DATABASE_URL" >> "$GITHUB_OUTPUT"
-          echo "branch_id=$(cat .neon-branch-id)" >> "$GITHUB_OUTPUT"
-
       - name: Build agent prompt
         run: |
-          DATABASE_URL="${{ steps.neon.outputs.database_url }}" \
-          NEON_BRANCH_ID="${{ steps.neon.outputs.branch_id }}" \
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
           echo "Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes"
 

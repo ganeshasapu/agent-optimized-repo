@@ -20,11 +20,10 @@ If neither applies, proceed with implementation.
 ### 1. Set up your environment
 
 ```bash
-export DATABASE_URL="<from your prompt>"
-pnpm install --frozen-lockfile
+pnpm agent:cloud-setup
 ```
 
-If your ticket requires database changes, the `DATABASE_URL` in your prompt points to an isolated Neon branch — safe to test against.
+This installs dependencies, creates an isolated Neon database branch, writes `DATABASE_URL` to `.env.local`, and runs migrations. Your database is fully isolated — safe to test against.
 
 ### 2. Create your branch
 
@@ -141,7 +140,7 @@ EOF
 )"
 ```
 
-Replace `<TICKET-ID>`, `<NEON_BRANCH_ID>`, and other placeholders with actual values from your prompt.
+Replace `<TICKET-ID>` with your ticket identifier. Read `<NEON_BRANCH_ID>` from `.neon-branch-id` (written by `pnpm agent:cloud-setup`).
 
 ### 9. Follow-up tickets
 
