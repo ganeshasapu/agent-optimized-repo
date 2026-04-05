@@ -90,5 +90,6 @@ jobs:
           claude install --force
           export PATH="$HOME/.local/bin:$PATH"
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          claude --remote "$PROMPT" --dangerously-skip-permissions
-          echo "Remote agent session dispatched"
+          echo "Prompt length: ${#PROMPT} chars"
+          echo "$PROMPT" | timeout 120 claude --remote 2>&1 || echo "Exit code: $?"
+          echo "Remote agent dispatch completed"
