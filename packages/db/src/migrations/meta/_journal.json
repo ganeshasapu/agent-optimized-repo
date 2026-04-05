@@ -36,6 +36,13 @@
       "when": 1775353690285,
       "tag": "0004_safe_norman_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1775356896135,
+      "tag": "0005_glossy_jack_flag",
+      "breakpoints": true
     }
   ]
 }
