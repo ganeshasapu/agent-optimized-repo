@@ -162,6 +162,17 @@ Agents have a Neon database branch in CI — a fully isolated copy-on-write fork
 - Migrations are auto-applied to production when your PR merges to main
 - `DATABASE_URL` is set in your environment — use `getDb()` from `@biarritz/db`
 
+### Migration Conflict Resolution
+
+Migration conflicts between parallel agents are resolved automatically by CI. You do NOT need to worry about migration index collisions (e.g., two agents both generating `0002_*.sql`). Just follow the standard workflow above.
+
+When your PR is opened, the `migration-reconcile` workflow:
+1. Detects if your migration index conflicts with what's already on `main`
+2. If so, deletes your migration files, resets to main's state, and regenerates from your schema changes
+3. Commits the fix to your PR branch automatically
+
+The schema `.ts` files are the source of truth — migrations are derived from them.
+
 ## Rules for Agents
 
 - **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`
