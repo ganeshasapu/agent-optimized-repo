@@ -89,6 +89,15 @@ jobs:
           npm install -g @anthropic-ai/claude-code@latest
           claude install --force
           export PATH="$HOME/.local/bin:$PATH"
+          echo "--- Debug: claude version ---"
+          claude --version
+          echo "--- Debug: auth status ---"
+          claude auth status --text || true
+          echo "--- Debug: which claude ---"
+          which claude
+          echo "--- Debug: claude help grep remote ---"
+          claude --help 2>&1 | grep -i remote || echo "no remote flag found in help"
+          echo "--- Dispatching ---"
           PROMPT=$(cat /tmp/agent-prompt.txt)
           claude --remote "$PROMPT"
           echo "Remote agent session dispatched"
