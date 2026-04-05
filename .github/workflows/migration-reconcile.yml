@@ -98,13 +98,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Save reconciliation script from main
+        run: |
+          # Copy the script to a temp location so it's available after branch switches
+          cp scripts/reconcile-migrations.sh /tmp/reconcile-migrations.sh
+          cp -r scripts/lib/ /tmp/reconcile-lib/
+
       - name: Find and reconcile conflicting PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find open PRs that touch migration/schema files
+          # Find open PRs that touch migration/schema files (deduplicated)
           OPEN_PRS=$(gh pr list --state open --json number,headRefName,files \
-            --jq '.[] | select(.files[]?.path | test("packages/db/src/(schema|migrations)/")) | "\(.number) \(.headRefName)"' \
+            --jq '[.[] | select(.files[]?.path | test("packages/db/src/(schema|migrations)/"))] | unique_by(.number) | .[] | "\(.number) \(.headRefName)"' \
             2>/dev/null || true)
 
           if [[ -z "$OPEN_PRS" ]]; then
@@ -123,6 +129,11 @@ jobs:
             # Check out the PR branch
             git fetch origin "$BRANCH"
             git checkout -B "reconcile-${PR_NUMBER}" "origin/${BRANCH}"
+
+            # Copy reconciliation script from main (may not exist on PR branch)
+            mkdir -p scripts/lib
+            cp /tmp/reconcile-migrations.sh scripts/reconcile-migrations.sh
+            cp /tmp/reconcile-lib/* scripts/lib/ 2>/dev/null || true
 
             # Run reconciliation
             if bash scripts/reconcile-migrations.sh; then
