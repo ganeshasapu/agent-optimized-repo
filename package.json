@@ -10,6 +10,7 @@
     "test:e2e": "turbo run test:e2e",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "agent:setup": "bash scripts/agent-setup.sh",
+    "agent:cloud-setup": "bash scripts/agent-cloud-setup.sh",
     "agent:verify": "bash scripts/agent-verify.sh",
     "agent:teardown": "bash scripts/agent-teardown.sh",
     "agent:check": "bash scripts/agent-check.sh",

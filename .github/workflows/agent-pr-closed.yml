@@ -1,0 +1,82 @@
+name: Agent PR Closed
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+env:
+  NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+  LINEAR_STATUS_DONE: ${{ vars.LINEAR_STATUS_DONE }}
+
+jobs:
+  cleanup:
+    name: Cleanup Neon & Update Linear
+    if: startsWith(github.event.pull_request.head.ref, 'linear/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - name: Extract Neon branch ID from PR body
+        id: neon
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          # Get PR body safely via gh CLI (avoids shell interpolation issues)
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+          # Extract neon branch ID from HTML comment: <!-- neon-branch: agent-12345 -->
+          NEON_BRANCH_ID=$(echo "$PR_BODY" | grep -oP '<!-- neon-branch: \K[^ ]+(?= -->)' || echo "")
+          echo "branch_id=$NEON_BRANCH_ID" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "$NEON_BRANCH_ID" ]]; then
+            echo "No Neon branch ID found in PR body"
+          else
+            echo "Found Neon branch: $NEON_BRANCH_ID"
+          fi
+
+      - name: Delete Neon branch
+        if: steps.neon.outputs.branch_id != ''
+        run: |
+          source scripts/lib/common.sh
+          source scripts/lib/neon.sh
+          neon_delete_branch "${{ steps.neon.outputs.branch_id }}" || true
+
+      - name: Update Linear ticket to Done
+        if: github.event.pull_request.merged == true
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          IDENTIFIER=$(echo "$BRANCH" | sed 's|^linear/||' | grep -oP '^[A-Z]+-\d+')
+
+          if [[ -z "$IDENTIFIER" || -z "$LINEAR_STATUS_DONE" ]]; then
+            echo "Skipping Linear update (identifier=$IDENTIFIER, status_done=$LINEAR_STATUS_DONE)"
+            exit 0
+          fi
+
+          # Look up issue ID
+          RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(python3 -c "import json; print(json.dumps({'query': 'query { issues(filter: { identifier: { eq: \"${IDENTIFIER}\" } }) { nodes { id } } }'}))")")
+
+          ISSUE_ID=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          nodes = json.load(sys.stdin)['data']['issues']['nodes']
+          print(nodes[0]['id'] if nodes else '')
+          " 2>/dev/null)
+
+          if [[ -n "$ISSUE_ID" ]]; then
+            source scripts/lib/linear.sh
+            linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_DONE" || true
+            echo "Moved $IDENTIFIER to Done"
+          fi

@@ -1,34 +1,228 @@
 # Agent Workflow Guide
 
-This document describes how autonomous coding agents should work in this repository.
+This document is the primary instruction source for autonomous coding agents working in this repository.
+Agents running via `claude --remote` read this file automatically.
+
+## Before You Start
+
+### Evaluate the ticket
+
+Before implementing, decide:
+
+1. **Is the ticket clear enough?** If the ticket is genuinely ambiguous — contradictory requirements, missing critical design decisions, or references unavailable resources — request clarification (see "Requesting Clarification" below). If it's just light on detail, use your best judgment and proceed.
+
+2. **Would this produce a PR that's logical and easy to review?** If not, decompose the ticket into sub-tickets that each make sense as their own PR (see "Decomposing Tickets" below).
+
+If neither applies, proceed with implementation.
 
 ## Standard Workflow
 
-### 1. Start
-```bash
-pnpm agent:setup
-```
-This creates your isolated Neon database branch, runs migrations, and starts the dev server. You now have a fully isolated environment — no conflicts with other agents or the main branch.
+### 1. Set up your environment
 
-### 2. Develop
+```bash
+pnpm agent:cloud-setup
+```
+
+This installs dependencies, creates an isolated Neon database branch, writes `DATABASE_URL` to `.env.local`, and runs migrations. Your database is fully isolated — safe to test against.
+
+### 2. Create your branch
+
+```bash
+git checkout -b linear/<TICKET-ID>-<slug>
+```
+
+Use the branch name provided in your prompt.
+
+### 3. Learn the codebase
+
+- Read `CLAUDE.md` at the repo root for overall conventions
+- Each package has its own `CLAUDE.md` with package-specific rules — read the ones relevant to your work
+- Use `packages/domain-users/` as the reference example for domain structure, tests, and route wiring
+- Read `DESIGN.md` before writing any UI code — it is the visual source of truth
+
+### 4. Implement
+
 Work within your assigned domain package (`packages/domain-*`). Follow the structure in the domain's CLAUDE.md.
 
-Run quick checks frequently:
+#### Database changes
+
+If your ticket requires schema changes:
+1. Create/edit schema files in `packages/db/src/schema/`
+2. Export new tables from `packages/db/src/schema/index.ts`
+3. Generate migration: `cd packages/db && npx drizzle-kit generate`
+4. Apply migration: `cd packages/db && DATABASE_URL="$DATABASE_URL" npx drizzle-kit migrate`
+5. Migrations are auto-applied to production when your PR merges
+
+#### Testing requirements
+
+- Unit tests are required for all new services — mock the DB with `vi.mock("@biarritz/db", ...)`
+- Integration tests use `describe.skipIf(!process.env.DATABASE_URL)` guard
+- Test files go in `__tests__/unit/` and `__tests__/integration/` matching the source file name
+- Look at `packages/domain-users/__tests__/` for examples
+- Run tests with `pnpm --filter=@biarritz/<package-name> test` during development
+
+#### Quality rules
+
+- Use `@biarritz/ui` components (Button, Input, Card, etc.) — never build raw HTML for common UI patterns
+- Use `cn()` from `@biarritz/ui` for className merging
+- Validate all user input with Zod schemas in `src/lib/validations.ts`
+- Use `type` imports for types: `import type { Foo } from "./bar"`
+- Use extensionless relative imports: `"./utils"` not `"./utils.js"`
+
+#### Visual quality — MANDATORY for any UI change
+
+Read `DESIGN.md` thoroughly before writing any component. Follow it exactly. Key rules:
+- All colors MUST come from design tokens (e.g. `bg-primary`, `text-muted-foreground`). Never use arbitrary hex/oklch values.
+- All icons MUST use `lucide-react`. Never hand-write SVG.
+- Font sizes: use the Linear-inspired scale from DESIGN.md (13px body, 14px titles). Never use text-xl or larger in app UI.
+- Border radius: `rounded-md` max. Never use `rounded-xl` or larger.
+- Follow the layout patterns in DESIGN.md exactly (page header, list pages, detail pages, forms).
+
+### 5. Verify
+
+Run quick checks frequently during development:
 ```bash
 pnpm agent:check
 ```
 
-### 3. Verify
-Before creating a PR, run the full pipeline:
+Before finishing, run the full pipeline:
 ```bash
 pnpm agent:verify
 ```
 All four steps must pass: typecheck, lint, test, build.
 
-### 4. Clean Up
+### 6. Self-review checklist
+
+Before committing, verify:
+1. All Tailwind class names resolve — no invented classes
+2. Every icon uses `lucide-react`, no inline `<svg>` elements
+3. Colors come from design tokens only — no arbitrary `bg-[#xxx]`
+4. Used `@biarritz/ui` components for all standard UI elements
+5. Font sizes follow DESIGN.md scale — no `text-xl` or larger in app UI
+6. Changes are scoped to what the ticket asked — no unrequested layout overhauls
+
+### 7. Commit and push
+
 ```bash
-pnpm agent:teardown
+git add -A
+git commit -m "feat(<TICKET-ID>): <short description of changes>"
+git push origin linear/<TICKET-ID>-<slug>
 ```
+
+### 8. Create a pull request
+
+Create a PR using `gh`:
+
+```bash
+gh pr create \
+  --base main \
+  --head "linear/<TICKET-ID>-<slug>" \
+  --title "<TICKET-ID>: <ticket title>" \
+  --body "$(cat <<'EOF'
+## Linear Ticket
+[<TICKET-ID>](https://linear.app/issue/<TICKET-ID>)
+
+<!-- neon-branch: <NEON_BRANCH_ID> -->
+
+## Summary
+<2-4 sentences describing what was done and why>
+
+## Changes
+<bullet list of key changes>
+
+## Testing
+- Unit tests: `pnpm --filter=@biarritz/<package> test`
+- Manual testing: <steps to verify>
+
+---
+*Automated by Linear Agent workflow*
+EOF
+)"
+```
+
+Replace `<TICKET-ID>` with your ticket identifier. Read `<NEON_BRANCH_ID>` from `.neon-branch-id` (written by `pnpm agent:cloud-setup`).
+
+### 9. Follow-up tickets
+
+If you discover unrelated bugs, missing tests, or improvements during implementation:
+1. Check the existing tickets list in your prompt to avoid duplicates
+2. If a similar ticket already exists, add a comment:
+   ```bash
+   source scripts/lib/linear.sh
+   linear_add_comment "<EXISTING_ISSUE_ID>" "Discovered while working on <TICKET-ID>: <your finding>"
+   ```
+3. If no similar ticket exists, create a new one:
+   ```bash
+   source scripts/lib/linear.sh
+   linear_create_issue "$LINEAR_TEAM_ID" "<title>" "<description>" ""
+   ```
+
+## Requesting Clarification
+
+Request clarification ONLY when:
+- The ticket is ambiguous about a critical design decision
+- There are contradictory requirements
+- The ticket references external resources that are not attached or described
+- A technical approach has multiple valid interpretations with significantly different outcomes
+
+Do NOT request clarification when the ticket is simply light on detail — use your best judgment.
+
+To request clarification:
+
+```bash
+source scripts/lib/linear.sh
+
+# Post your questions as a comment
+linear_add_comment "<ISSUE_ID>" "**Clarification needed before implementation can proceed.**
+
+<summary of what is unclear>
+
+1. <question 1>
+2. <question 2>
+
+Reply with \`@agent\` followed by your answers to resume implementation. — Agent"
+
+# Move ticket to Needs Clarification status
+linear_update_issue_status "<ISSUE_ID>" "$LINEAR_STATUS_NEEDS_CLARIFICATION"
+```
+
+Then exit without creating a branch or making changes.
+
+## Decomposing Tickets
+
+If the ticket would not produce a PR that's logical and easy to review, break it into sub-tickets. Each sub-ticket should make sense as its own PR — reviewable, self-contained, and logically coherent.
+
+To decompose:
+
+```bash
+source scripts/lib/linear.sh
+
+# Create sub-tickets (order by dependencies: DB changes first, then services, then UI)
+linear_create_sub_issue "$LINEAR_TEAM_ID" "<PARENT_ISSUE_ID>" "Sub-ticket title" "Parent: <TICKET-ID>
+Order: 1/N
+
+<description of what this sub-ticket covers>"
+
+# Repeat for each sub-ticket...
+
+# Set each sub-ticket to Todo to trigger new agents
+linear_update_issue_status "<SUB_ISSUE_ID>" "$LINEAR_STATUS_TODO"
+
+# Update parent to Decomposed
+linear_update_issue_status "<PARENT_ISSUE_ID>" "$LINEAR_STATUS_DECOMPOSED"
+
+# Post a comment on the parent
+linear_add_comment "<PARENT_ISSUE_ID>" "Decomposed into N sub-tickets. Each sub-ticket will be implemented independently."
+```
+
+Then exit without creating a branch or implementing.
+
+## Domain Rules
+
+- **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`
+- **Database changes are allowed**: You MAY modify `packages/db/src/schema/` and generate migrations when your ticket requires schema changes
+- **Do not modify UI or shared packages** (`packages/ui`, `packages/shared`) without explicit instruction
+- **Never commit `.env.local`** or `.neon-branch-id`
 
 ## Creating a New Domain Package
 
@@ -50,121 +244,13 @@ pnpm agent:teardown
 
 1. Create schema file in `packages/db/src/schema/<table>.ts`
 2. Export it from `packages/db/src/schema/index.ts`
-3. Run `pnpm db:generate` to create a migration
-4. Run `pnpm db:migrate` to apply it
+3. Run `cd packages/db && npx drizzle-kit generate` to create a migration
+4. Run `cd packages/db && DATABASE_URL="$DATABASE_URL" npx drizzle-kit migrate` to apply it
 5. Never edit generated migration SQL files
 
-## Linear-Driven Workflow
+## Migration Conflict Resolution
 
-When triggered by a Linear ticket (via GitHub Actions), agents follow this flow:
-
-1. The prompt contains the ticket ID, title, description, labels, and comments
-2. Create a branch named `linear/<ticket-id>-<slug>` (e.g., `linear/BIA-42-add-project-model`)
-3. Implement the work described in the ticket
-4. If the ticket is vague, use your best judgment — prefer small, focused changes
-5. Run `pnpm agent:verify` — all checks must pass
-6. If you discover unrelated bugs, missing tests, or improvements, include them as `follow_ups` in your output JSON
-7. The workflow will automatically create a PR, update the Linear ticket, and file follow-up tickets
-
-### Output Format
-
-When running as a Linear-triggered agent, your final output MUST include this JSON block:
-
-```json
-{
-  "status": "success",
-  "summary": "Added project model with CRUD service and routes",
-  "branch": "linear/BIA-42-add-project-model",
-  "follow_ups": [
-    { "title": "Add index on projects.team_id", "description": "Query performance will degrade without an index on the team_id foreign key", "labels": ["tech-debt"] }
-  ]
-}
-```
-
-## Committing Your Work
-
-**You MUST commit your changes before outputting the final JSON block.** The workflow determines success by checking for git commits on your branch — not your self-reported status. If you don't commit, all your work is lost.
-
-```bash
-git add -A
-git commit -m "feat(TICKET-ID): short description of changes"
-```
-
-The workflow enforces this contract:
-- **1+ commits on branch** → PR is created → success
-- **0 commits on branch** → automatic retry (regardless of what you report in JSON)
-- **0 commits after retry** → ticket marked as failed in Linear
-
-## Automatic Retry
-
-The workflow will automatically retry once if:
-
-1. You produced 0 commits (even if you reported "success" in JSON)
-2. The retry agent receives: original task + any uncommitted changes you left on disk + your output
-3. If the retry also produces 0 commits, the ticket is marked as failed in Linear
-
-Always output a proper status JSON — even on failure — so the workflow can capture diagnostic context.
-
-## Automated Review
-
-After a PR is created, an automated reviewer agent analyzes your changes against:
-- Scope compliance (stayed within assigned domain)
-- Design system compliance (if UI changes)
-- Code quality (imports, naming, validation)
-- Test coverage
-- Ticket completeness
-
-The review is advisory and does not block merging. Address FAIL items before requesting human review.
-
-## Review-to-Revision Loop
-
-When a human reviewer submits "changes requested" on an agent PR:
-1. A revision agent reads the review comments
-2. It addresses each comment and pushes fixes to the same branch
-3. Maximum 2 automatic revisions per PR
-4. After 2 revisions, further changes require manual implementation
-
-## Ticket Decomposition
-
-Large tickets can be automatically broken into smaller sub-tickets:
-
-1. Move a ticket to "Decompose" status in Linear
-2. A decomposition agent analyzes the ticket and codebase structure
-3. If decomposition is warranted, sub-tickets are created as children of the parent
-4. Each sub-ticket is scoped to a single domain, ordered by dependencies
-5. The parent moves to "Decomposed" status
-6. Sub-tickets are set to "Todo", triggering implementation agents for each one
-
-### When tickets get decomposed
-- They touch multiple domain packages
-- They have 3+ distinct requirements
-- They require both schema changes and UI work across domains
-
-### Sub-ticket completion
-- Each sub-ticket is implemented independently by its own agent
-- Linear's built-in auto-close handles parent completion when all children are done
-
-## Database Changes
-
-Agents have a Neon database branch in CI — a fully isolated copy-on-write fork of production. You can create, test, and deploy schema changes autonomously.
-
-### Adding or modifying a table
-1. Create/edit the schema file in `packages/db/src/schema/<table>.ts`
-2. Export it from `packages/db/src/schema/index.ts`
-3. Generate the migration: `cd packages/db && npx drizzle-kit generate`
-4. Apply it to your Neon branch: `cd packages/db && npx drizzle-kit migrate`
-5. Write services and tests that use the new schema
-6. `pnpm agent:verify` will validate the migration applies cleanly
-
-### Rules
-- Never edit generated migration SQL files
-- Always generate migrations after schema changes — don't skip this step
-- Migrations are auto-applied to production when your PR merges to main
-- `DATABASE_URL` is set in your environment — use `getDb()` from `@biarritz/db`
-
-### Migration Conflict Resolution
-
-Migration conflicts between parallel agents are resolved automatically by CI. You do NOT need to worry about migration index collisions (e.g., two agents both generating `0002_*.sql`). Just follow the standard workflow above.
+Migration conflicts between parallel agents are resolved automatically by CI. You do NOT need to worry about migration index collisions. Just follow the standard workflow above.
 
 When your PR is opened, the `migration-reconcile` workflow:
 1. Detects if your migration index conflicts with what's already on `main`
@@ -173,12 +259,29 @@ When your PR is opened, the `migration-reconcile` workflow:
 
 The schema `.ts` files are the source of truth — migrations are derived from them.
 
-## Rules for Agents
+## Addressing Review Feedback
 
-- **Stay in your domain**: Only modify files in your assigned `packages/domain-*` and its route re-exports in `apps/web/app/(domains)/`
-- **Database changes are allowed**: You MAY modify `packages/db/src/schema/` and generate migrations when your ticket requires schema changes
-- **Do not modify UI or shared packages** (`packages/ui`, `packages/shared`) without explicit instruction
-- **Run `pnpm agent:check`** after every significant change
-- **Run `pnpm agent:verify`** before submitting work
-- **Never commit `.env.local`** or `.neon-branch-id`
-- **Use scoped test runs** during development: `pnpm --filter=@biarritz/domain-X test`
+When you are invoked to address review feedback on an existing PR:
+1. You are already on the PR branch with all existing changes
+2. Read each review comment carefully and address it
+3. For inline comments, go to the specific file and line and make the requested change
+4. Do NOT revert unrelated changes or start over — only address the review feedback
+5. If a comment is unclear, use your best judgment and note your interpretation
+6. Run `pnpm agent:verify` before finishing
+7. Commit and push:
+   ```bash
+   git add -A
+   git commit -m "fix(<TICKET-ID>): address review feedback"
+   git push origin <branch>
+   ```
+
+## Automated Review
+
+After your PR is created, an automated reviewer agent analyzes your changes against:
+- Scope compliance (stayed within assigned domain)
+- Design system compliance (if UI changes)
+- Code quality (imports, naming, validation)
+- Test coverage
+- Ticket completeness
+
+The review is advisory and does not block merging. Address FAIL items before requesting human review.

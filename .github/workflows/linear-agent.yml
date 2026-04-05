@@ -7,50 +7,20 @@ on:
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
-  LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
-  NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-  LINEAR_STATUS_NEEDS_CLARIFICATION: ${{ vars.LINEAR_STATUS_NEEDS_CLARIFICATION }}
 
 jobs:
-  agent:
-    name: Execute Linear Ticket
+  dispatch:
+    name: Dispatch Agent
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create Neon database branch
-        id: neon
-        run: |
-          source scripts/lib/common.sh
-          source scripts/lib/neon.sh
-          BRANCH_ID="agent-${{ github.run_id }}"
-          DATABASE_URL=$(neon_create_branch "$BRANCH_ID")
-          echo "database_url=$DATABASE_URL" >> "$GITHUB_OUTPUT"
-          echo "branch_id=$(cat .neon-branch-id)" >> "$GITHUB_OUTPUT"
-
-          # Run migrations against the branch
-          cd packages/db
-          DATABASE_URL="$DATABASE_URL" npx drizzle-kit migrate
-          echo "Migrations applied to Neon branch" >&2
+          sparse-checkout: scripts
 
       - name: Fetch full ticket from Linear
         id: ticket
@@ -73,39 +43,25 @@ jobs:
           echo "$TICKET_JSON" > /tmp/ticket.json
 
           IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
-          TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
           echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-
-          # Pre-compute the branch name
-          SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
-          BRANCH="linear/${IDENTIFIER}-${SLUG}"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "Branch will be: $BRANCH"
 
           # Extract image URLs from attachments and description
-          IMAGE_URLS=$(python3 -c "
+          python3 -c "
           import json, re
           data = json.load(open('/tmp/ticket.json'))
           urls = []
-          # From attachments
           for a in data.get('attachments', {}).get('nodes', []):
               url = a.get('url', '')
               if any(url.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']):
                   urls.append(url)
-          # From markdown image syntax in description
           desc = data.get('description', '') or ''
           for match in re.findall(r'!\[.*?\]\((https?://[^\)]+)\)', desc):
               urls.append(match)
-          # From Linear upload URLs in description
           for match in re.findall(r'(https://uploads\.linear\.app/[^\s\)]+)', desc):
               if match not in urls:
                   urls.append(match)
           print('\n'.join(urls))
-          " 2>/dev/null || echo "")
-          echo "$IMAGE_URLS" > /tmp/image-urls.txt
-          IMAGE_COUNT=$(grep -c . /tmp/image-urls.txt 2>/dev/null || echo "0")
-          echo "Found $IMAGE_COUNT image(s)"
+          " > /tmp/image-urls.txt 2>/dev/null || true
 
       - name: Fetch existing tickets from Linear
         run: |
@@ -120,414 +76,17 @@ jobs:
           for issue in data:
               print(f\"{issue['identifier']}: {issue['title']} [{issue['state']['name']}]\")
           " > /tmp/existing-tickets.txt 2>/dev/null || echo "" > /tmp/existing-tickets.txt
-          echo "Found $(wc -l < /tmp/existing-tickets.txt) existing tickets"
-
-      - name: Prepare branch for agent
-        run: |
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          # Delete any local branch left over from a previous run or remote fetch.
-          # This ensures the agent can `git checkout -b $BRANCH` cleanly.
-          # The remote branch (if any) is left intact — force-push later overwrites it.
-          git branch -D "$BRANCH" 2>/dev/null && echo "Deleted local branch: $BRANCH" || true
-          # Also remove the remote-tracking ref so `git checkout` doesn't auto-create
-          # a local tracking branch from the old remote branch.
-          git update-ref -d "refs/remotes/origin/$BRANCH" 2>/dev/null || true
 
       - name: Build agent prompt
         run: |
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
           echo "Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code@latest
-
-      - name: Run Claude agent
-        id: agent
+      - name: Dispatch remote agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DATABASE_URL: ${{ steps.neon.outputs.database_url }}
         run: |
-          # Run agent
+          npm install -g @anthropic-ai/claude-code@latest
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          claude -p "$PROMPT" \
-            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-            --output-format text \
-            > /tmp/agent-output.txt 2>&1 || true
-
-          echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
-
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-
-          # Determine success based on ACTUAL git state, not self-reported JSON.
-          # The agent MUST have created the branch AND committed at least once.
-          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-            AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
-          else
-            AHEAD="0"
-          fi
-
-          if [[ "$AHEAD" -gt 0 ]]; then
-            echo "agent_status=success" >> "$GITHUB_OUTPUT"
-            echo "Agent created $AHEAD commit(s) on $BRANCH"
-          else
-            echo "agent_status=failed" >> "$GITHUB_OUTPUT"
-            echo "Agent produced 0 commits — treating as failure regardless of self-reported status"
-            # Also check for uncommitted changes (agent edited files but forgot to commit)
-            UNSTAGED=$(git diff --stat 2>/dev/null | tail -1)
-            UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-            echo "Uncommitted changes: ${UNSTAGED:-none}"
-            echo "Untracked files: ${UNTRACKED}"
-          fi
-
-      - name: Check for clarification request
-        id: clarification
-        run: |
-          NEEDS=$(python3 << 'PYEOF'
-          import re, json
-          try:
-              text = open("/tmp/agent-output.txt").read()
-              match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
-              if match:
-                  result = json.loads(match.group(1))
-                  if result.get("status") == "needs_clarification":
-                      questions = result.get("questions", [])
-                      summary = result.get("summary", "The agent needs clarification before proceeding.")
-                      body = "**Clarification needed before implementation can proceed.**\n\n"
-                      body += summary + "\n\n"
-                      for i, q in enumerate(questions, 1):
-                          body += f"{i}. {q}\n"
-                      body += "\nReply with `@agent` followed by your answers to resume implementation. — Agent"
-                      with open("/tmp/clarification-comment.txt", "w") as f:
-                          f.write(body)
-                      print("true")
-                  else:
-                      print("false")
-              else:
-                  print("false")
-          except Exception:
-              print("false")
-          PYEOF
-          )
-          echo "needs_clarification=$NEEDS" >> "$GITHUB_OUTPUT"
-          if [[ "$NEEDS" == "true" ]]; then
-            echo "Agent requested clarification — will post questions and pause"
-          fi
-
-      - name: Post clarification to Linear
-        if: steps.clarification.outputs.needs_clarification == 'true'
-        run: |
-          source scripts/lib/linear.sh
-          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
-          COMMENT=$(cat /tmp/clarification-comment.txt)
-          linear_add_comment "$ISSUE_ID" "$COMMENT" || true
-          if [[ -n "$LINEAR_STATUS_NEEDS_CLARIFICATION" ]]; then
-            linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_NEEDS_CLARIFICATION" || true
-          fi
-          echo "Posted clarification questions and moved ticket to Needs Clarification"
-
-      - name: Retry agent on failure
-        if: steps.agent.outputs.agent_status == 'failed' && steps.clarification.outputs.needs_clarification != 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DATABASE_URL: ${{ steps.neon.outputs.database_url }}
-        run: |
-          echo "Agent failed (0 commits) — attempting retry..."
-
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-
-          # Capture what the agent already changed (uncommitted work on disk)
-          AGENT_DIFF=""
-          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-            AGENT_DIFF=$(git diff main.."$BRANCH" 2>/dev/null | head -c 15000)
-          fi
-          # Also capture any uncommitted changes (agent may have edited without committing)
-          UNCOMMITTED_DIFF=$(git diff 2>/dev/null | head -c 10000)
-          UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null | head -20)
-
-          # Capture the error output (last 3000 chars)
-          ERROR_TAIL=$(tail -c 3000 /tmp/agent-output.txt)
-
-          # Build retry prompt
-          ORIGINAL_PROMPT=$(cat /tmp/agent-prompt.txt)
-
-          cat > /tmp/retry-prompt.txt <<RETRY_EOF
-          You are retrying a failed implementation attempt.
-          The previous agent ran but FAILED because it did not commit any code to git.
-
-          ## Original Task
-          ${ORIGINAL_PROMPT}
-
-          ## What Was Already Done
-          The previous agent may have made changes but did NOT commit them.
-
-          Committed diff against main:
-          \`\`\`diff
-          ${AGENT_DIFF:-No committed changes.}
-          \`\`\`
-
-          Uncommitted changes on disk:
-          \`\`\`diff
-          ${UNCOMMITTED_DIFF:-No uncommitted changes.}
-          \`\`\`
-
-          Untracked files:
-          ${UNTRACKED_FILES:-None}
-
-          ## Previous Agent Output
-          \`\`\`
-          ${ERROR_TAIL}
-          \`\`\`
-
-          ## Retry Instructions — READ CAREFULLY
-          1. If the previous agent left useful uncommitted work, stage and commit it first: \`git add -A && git commit -m "wip: previous agent work"\`
-          2. If the previous agent did nothing useful, start fresh from scratch.
-          3. Implement the full ticket requirements.
-          4. Run \`pnpm agent:verify\` — all checks must pass.
-          5. **CRITICAL**: You MUST commit ALL your changes before outputting the JSON block:
-             \`\`\`bash
-             git add -A
-             git commit -m "feat(\${ISSUE_ID}): <description>"
-             \`\`\`
-             If you do not commit, your work will be LOST and the workflow will fail.
-          6. Output the standard JSON block when done.
-          RETRY_EOF
-
-          # Ensure we are on the agent's branch for the retry
-          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-            git checkout "$BRANCH"
-          else
-            git checkout -b "$BRANCH"
-          fi
-
-          RETRY_PROMPT=$(cat /tmp/retry-prompt.txt)
-          claude -p "$RETRY_PROMPT" \
-            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-            --output-format text \
-            > /tmp/agent-output-retry.txt 2>&1 || true
-
-          echo "Retry output: $(wc -c < /tmp/agent-output-retry.txt) bytes"
-
-          # Replace agent output with retry output for downstream steps
-          cp /tmp/agent-output-retry.txt /tmp/agent-output.txt
-
-          # Verify the retry actually produced commits
-          AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
-          if [[ "$AHEAD" -gt 0 ]]; then
-            echo "Retry succeeded: $AHEAD commit(s) on $BRANCH"
-          else
-            echo "Retry also failed: still 0 commits on $BRANCH"
-          fi
-
-      - name: Check results and push
-        if: steps.clarification.outputs.needs_clarification != 'true'
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-          TITLE="${{ steps.ticket.outputs.title }}"
-
-          # Check if the agent created the branch with commits
-          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-            AHEAD=$(git rev-list --count main.."$BRANCH" 2>/dev/null || echo "0")
-            echo "Branch $BRANCH exists with $AHEAD commits ahead of main"
-          else
-            echo "Branch $BRANCH was not created by the agent."
-            echo "status=failed" >> "$GITHUB_OUTPUT"
-            # Save agent output as summary
-            SUMMARY=$(tail -c 300 /tmp/agent-output.txt | tr '\n' ' ' | head -c 200)
-            echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ "$AHEAD" == "0" ]]; then
-            echo "Branch exists but has no new commits."
-            echo "status=failed" >> "$GITHUB_OUTPUT"
-            echo "summary=Agent created branch but made no changes" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Force-push to handle existing branches from previous runs
-          git push origin "$BRANCH" --force-with-lease 2>/dev/null || git push origin "$BRANCH" --force
-
-          # Check if PR already exists
-          EXISTING_PR=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
-
-          if [[ -n "$EXISTING_PR" ]]; then
-            echo "PR already exists: $EXISTING_PR"
-            PR_URL="$EXISTING_PR"
-          else
-            # Use agent-written PR description if available, otherwise fallback
-            if [[ -f /tmp/pr-description.md ]]; then
-              AGENT_DESC=$(cat /tmp/pr-description.md)
-            else
-              AGENT_DESC="*No description provided by agent.*"
-            fi
-
-            NEON_BRANCH_ID="${{ steps.neon.outputs.branch_id }}"
-            NEON_URL="https://console.neon.tech/app/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/tables"
-
-            PR_BODY="## Linear Ticket
-          [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
-
-          ## Neon Database Branch
-          [View tables](${NEON_URL})
-
-          ${AGENT_DESC}
-
-          ---
-          *Automated by Linear Agent workflow*"
-
-            PR_URL=$(gh pr create \
-              --base main \
-              --head "$BRANCH" \
-              --title "${IDENTIFIER}: ${TITLE}" \
-              --body "$PR_BODY")
-          fi
-
-          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
-          echo "status=success" >> "$GITHUB_OUTPUT"
-
-      - name: Update Linear ticket
-        if: always() && steps.clarification.outputs.needs_clarification != 'true'
-        run: |
-          source scripts/lib/linear.sh
-          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
-          PR_URL="${{ steps.pr.outputs.pr_url }}"
-          STATUS="${{ steps.pr.outputs.status }}"
-
-          if [[ -z "$ISSUE_ID" ]]; then
-            echo "No issue ID, skipping Linear update"
-            exit 0
-          fi
-
-          AGENT_STATUS="${{ steps.agent.outputs.agent_status }}"
-
-          if [[ "$STATUS" == "success" && -n "$PR_URL" ]]; then
-            if [[ -n "$LINEAR_STATUS_IN_REVIEW" ]]; then
-              linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW" || true
-            fi
-            linear_add_comment "$ISSUE_ID" "PR created: ${PR_URL}" || true
-          elif [[ "${{ job.status }}" == "cancelled" ]]; then
-            linear_add_comment "$ISSUE_ID" "Agent timed out after 45 minutes. Consider breaking this ticket into smaller pieces." || true
-          elif [[ "$AGENT_STATUS" == "failed" ]]; then
-            linear_add_comment "$ISSUE_ID" "Agent failed verification and retry also failed. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" || true
-          else
-            linear_add_comment "$ISSUE_ID" "Agent was unable to complete this ticket. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" || true
-          fi
-
-      - name: Create follow-up tickets
-        if: steps.pr.outputs.status == 'success' && steps.clarification.outputs.needs_clarification != 'true'
-        run: |
-          source scripts/lib/linear.sh
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-
-          # Extract follow-ups from the agent's text output
-          python3 /dev/stdin << 'PYEOF'
-          import json, re, subprocess, os
-
-          try:
-              text = open("/tmp/agent-output.txt").read()
-          except FileNotFoundError:
-              print("No agent output found, skipping follow-ups")
-              exit(0)
-
-          # Look for follow_ups in a JSON block in the text
-          fence = "```"
-          pattern = fence + r'json\s*(\{.*?\})\s*' + fence
-          match = re.search(pattern, text, re.DOTALL)
-
-          follow_ups = []
-          if match:
-              try:
-                  result = json.loads(match.group(1))
-                  follow_ups = result.get("follow_ups", [])[:5]
-              except json.JSONDecodeError:
-                  pass
-
-          if not follow_ups:
-              print("No follow-up tickets to create")
-              exit(0)
-
-          team_id = os.environ.get("LINEAR_TEAM_ID", "")
-          identifier = os.environ.get("IDENTIFIER", "")
-          if not team_id:
-              print("LINEAR_TEAM_ID not set, skipping")
-              exit(0)
-
-          for fu in follow_ups:
-              title = fu.get("title", "")
-              desc = fu.get("description", "")
-              full_desc = f"Discovered while working on {identifier}.\n\n{desc}"
-              print(f"Creating follow-up: {title}")
-              subprocess.run(
-                  ["bash", "-c", f'source scripts/lib/linear.sh && linear_create_issue "{team_id}" "{title}" "{full_desc}" ""'],
-                  check=False,
-                  env={**os.environ, "IDENTIFIER": identifier}
-              )
-          PYEOF
-
-      - name: Run automated reviewer
-        if: steps.pr.outputs.status == 'success' && steps.clarification.outputs.needs_clarification != 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set +o pipefail
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          PR_URL="${{ steps.pr.outputs.pr_url }}"
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-
-          # Build reviewer prompt
-          bash scripts/build-reviewer-prompt.sh /tmp/ticket.json "$PR_URL" "$BRANCH" > /tmp/reviewer-prompt.txt
-          echo "Reviewer prompt size: $(wc -c < /tmp/reviewer-prompt.txt) bytes" >&2
-
-          # Run reviewer agent with read-only tools
-          REVIEW_PROMPT=$(cat /tmp/reviewer-prompt.txt)
-          claude -p "$REVIEW_PROMPT" \
-            --allowedTools "Read,Glob,Grep" \
-            --output-format text \
-            > /tmp/review-output.txt 2>&1 || true
-
-          echo "Review output: $(wc -c < /tmp/review-output.txt) bytes" >&2
-
-          # Parse verdict
-          VERDICT=$(grep -oP 'REVIEW_VERDICT:\s*\K\S+' /tmp/review-output.txt 2>/dev/null || echo "COMMENT")
-
-          # Extract review body and write to file
-          python3 -c "
-          import re
-          text = open('/tmp/review-output.txt').read()
-          match = re.search(r'REVIEW_BODY:\s*\n(.*?)(?:LINE_COMMENTS:|$)', text, re.DOTALL)
-          body = match.group(1).strip() if match else 'Review agent did not produce structured output.'
-          identifier = '${IDENTIFIER}'
-          with open('/tmp/review-body.txt', 'w') as f:
-              f.write('> **Automated Agent Review** — This review is advisory and does not block merging.\n\n')
-              f.write(body)
-              f.write(f'\n\n---\n*Reviewed by Claude Agent for {identifier}*\n')
-          "
-
-          # Map verdict to gh pr review flag
-          case "$VERDICT" in
-            APPROVE)         REVIEW_FLAG="--approve" ;;
-            REQUEST_CHANGES) REVIEW_FLAG="--comment" ;;
-            *)               REVIEW_FLAG="--comment" ;;
-          esac
-
-          # Post review
-          gh pr review "$PR_URL" $REVIEW_FLAG --body-file /tmp/review-body.txt || true
-
-          echo "Review posted with verdict: $VERDICT" >&2
-
-      - name: Cleanup Neon branch
-        if: always() && (steps.pr.outputs.status != 'success' || steps.clarification.outputs.needs_clarification == 'true')
-        run: |
-          # Only delete Neon branch if PR was NOT created successfully.
-          # When a PR exists, keep the branch so reviewers can inspect the DB via the link in the PR.
-          if [[ -f .neon-branch-id ]]; then
-            source scripts/lib/common.sh
-            source scripts/lib/neon.sh
-            BRANCH_ID=$(cat .neon-branch-id)
-            neon_delete_branch "$BRANCH_ID" || true
-          fi
+          claude --remote "$PROMPT"
+          echo "Remote agent session dispatched"
