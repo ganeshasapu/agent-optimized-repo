@@ -60,6 +60,7 @@ jobs:
         run: |
           npm install -g @anthropic-ai/claude-code@latest
           claude install --force
+          export PATH="$HOME/.local/bin:$PATH"
           PROMPT=$(cat /tmp/fix-prompt.txt)
           claude --remote "$PROMPT"
           echo "Remote fix agent dispatched"
