@@ -89,9 +89,12 @@ jobs:
           npm install -g @anthropic-ai/claude-code@latest
           claude install --force
           export PATH="$HOME/.local/bin:$PATH"
+          # Pre-create Claude config to skip first-time setup wizard
+          mkdir -p ~/.claude
+          echo '{"hasCompletedOnboarding":true,"theme":"dark"}' > ~/.claude/settings.json
+
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          # Write prompt to file to avoid shell quoting issues
           echo "$PROMPT" > /tmp/remote-prompt.txt
-          # Use script to allocate a pseudo-TTY and auto-answer the trust dialog
+          # Use script to allocate a pseudo-TTY and auto-answer trust dialog
           printf '1\n' | script -qec "claude --remote \"\$(cat /tmp/remote-prompt.txt)\"" /dev/null 2>&1
           echo "Remote agent dispatch completed"
