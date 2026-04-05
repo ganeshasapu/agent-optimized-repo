@@ -9,18 +9,31 @@ env:
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
 
 jobs:
-  dispatch:
-    name: Dispatch Agent
+  agent:
+    name: Execute Linear Ticket
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          sparse-checkout: scripts
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Fetch full ticket from Linear
         id: ticket
@@ -82,27 +95,16 @@ jobs:
           bash scripts/build-agent-prompt.sh /tmp/ticket.json > /tmp/agent-prompt.txt
           echo "Prompt size: $(wc -c < /tmp/agent-prompt.txt) bytes"
 
-      - name: Dispatch remote agent
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: |
-          npm install -g @anthropic-ai/claude-code@latest
-          claude install --force
-          export PATH="$HOME/.local/bin:$PATH"
-          mkdir -p ~/.claude
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@latest
 
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          echo "$PROMPT" > /tmp/remote-prompt.txt
-          # Use script for pseudo-TTY, yes to auto-answer all interactive prompts
-          yes 1 | script -qec "claude --remote \"\$(cat /tmp/remote-prompt.txt)\"" /dev/null 2>&1 &
-          CLAUDE_PID=$!
-          # Wait up to 60s for session URL to appear, then kill
-          for i in $(seq 1 60); do
-            sleep 1
-            if ! kill -0 $CLAUDE_PID 2>/dev/null; then
-              echo "claude exited"
-              break
-            fi
-          done
-          kill $CLAUDE_PID 2>/dev/null || true
-          echo "Remote agent dispatch completed"
+          claude -p "$PROMPT" \
+            --dangerously-skip-permissions \
+            --output-format text \
+            > /tmp/agent-output.txt 2>&1 || true
+          echo "Agent output: $(wc -c < /tmp/agent-output.txt) bytes"
