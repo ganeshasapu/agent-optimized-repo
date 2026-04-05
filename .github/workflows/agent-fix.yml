@@ -6,39 +6,24 @@ on:
 
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-  LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
-  LINEAR_STATUS_IN_REVIEW: ${{ vars.LINEAR_STATUS_IN_REVIEW }}
 
 concurrency:
   group: agent-fix-${{ github.event.client_payload.issue_id }}
   cancel-in-progress: true
 
 jobs:
-  fix:
-    name: Fix via @agent
+  dispatch:
+    name: Dispatch Fix Agent
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: ".nvmrc"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          sparse-checkout: scripts
 
       - name: Fetch ticket from Linear
         id: ticket
@@ -47,8 +32,7 @@ jobs:
           INSTRUCTIONS="${{ github.event.client_payload.instructions }}"
           echo "issue_id=$ISSUE_ID" >> "$GITHUB_OUTPUT"
 
-          # Fetch full ticket
-          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description priority state { name } labels { nodes { name } } comments { nodes { body user { name } } } } }'}))")
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'query': 'query { issue(id: \"'\"$ISSUE_ID\"'\") { id identifier title description } }'}))")
 
           RESPONSE=$(curl -s -S -X POST "https://api.linear.app/graphql" \
             -H "Authorization: ${LINEAR_API_KEY}" \
@@ -62,278 +46,17 @@ jobs:
           ")
           echo "$TICKET_JSON" > /tmp/ticket.json
 
-          IDENTIFIER=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['identifier'])")
-          TITLE=$(echo "$TICKET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
-          echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-
-          # Find existing branch for this ticket
-          SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
-          EXPECTED_BRANCH="linear/${IDENTIFIER}-${SLUG}"
-          echo "expected_branch=$EXPECTED_BRANCH" >> "$GITHUB_OUTPUT"
-
-          # Check if branch exists on remote
-          EXISTING_BRANCH=$(git branch -r --list "origin/linear/${IDENTIFIER}-*" | head -1 | xargs || echo "")
-          if [[ -n "$EXISTING_BRANCH" ]]; then
-            BRANCH="${EXISTING_BRANCH#origin/}"
-            echo "Found existing branch: $BRANCH"
-            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-            echo "has_branch=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No existing branch found, will create: $EXPECTED_BRANCH"
-            echo "branch=$EXPECTED_BRANCH" >> "$GITHUB_OUTPUT"
-            echo "has_branch=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout existing branch
-        if: steps.ticket.outputs.has_branch == 'true'
-        run: |
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          git checkout "$BRANCH"
-
-      - name: Gather PR context
-        id: pr_context
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-
-          # Check if PR exists for this branch
-          PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-
-          if [[ -n "$PR_NUMBER" ]]; then
-            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-            echo "has_pr=true" >> "$GITHUB_OUTPUT"
-
-            # Get CI check status
-            gh pr checks "$PR_NUMBER" > /tmp/ci-status.txt 2>/dev/null || echo "No CI status" > /tmp/ci-status.txt
-
-            # Get review comments
-            gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews" \
-              --jq '.[] | "Reviewer: \(.user.login)\nState: \(.state)\n\(.body)\n---"' \
-              > /tmp/review-comments.txt 2>/dev/null || echo "" > /tmp/review-comments.txt
-
-            # Get inline review comments
-            gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/comments" \
-              --jq '.[] | "File: \(.path):\(.line // "N/A")\nComment: \(.body)\n---"' \
-              >> /tmp/review-comments.txt 2>/dev/null || true
-          else
-            echo "has_pr=false" >> "$GITHUB_OUTPUT"
-            echo "No CI status" > /tmp/ci-status.txt
-            echo "" > /tmp/review-comments.txt
-          fi
-
       - name: Build fix prompt
         run: |
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-          TITLE="${{ steps.ticket.outputs.title }}"
           INSTRUCTIONS="${{ github.event.client_payload.instructions }}"
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          HAS_BRANCH="${{ steps.ticket.outputs.has_branch }}"
-
-          DESCRIPTION=$(python3 -c "import sys,json; print(json.load(open('/tmp/ticket.json')).get('description','No description'))")
-
-          # Get current diff if on existing branch
-          PR_DIFF=""
-          if [[ "$HAS_BRANCH" == "true" ]]; then
-            PR_DIFF=$(git diff main..HEAD 2>/dev/null | head -c 20000 || echo "")
-          fi
-
-          CI_STATUS=$(cat /tmp/ci-status.txt)
-          REVIEW_COMMENTS=$(cat /tmp/review-comments.txt)
-          CLAUDE_MD=$(cat CLAUDE.md)
-          AGENTS_MD=$(cat AGENTS.md)
-
-          cat > /tmp/fix-prompt.txt <<PROMPT_EOF
-          You are fixing an issue on an existing branch in the Biarritz codebase.
-          A team member has asked you to make changes via a Linear comment.
-
-          ## Original Ticket
-          - ID: ${IDENTIFIER}
-          - Title: ${TITLE}
-          - Description: ${DESCRIPTION}
-
-          ## Instructions from Team Member
-          ${INSTRUCTIONS}
-
-          ## Current Branch State
-          Branch: ${BRANCH}
-          Has existing changes: ${HAS_BRANCH}
-
-          ### Current Diff (against main)
-          \`\`\`diff
-          ${PR_DIFF:-No existing changes — this may be a fresh implementation request.}
-          \`\`\`
-
-          ### CI Status
-          ${CI_STATUS}
-
-          ### Review Comments
-          ${REVIEW_COMMENTS:-No review comments}
-
-          ## What To Do
-          1. Follow the instructions from the team member above — this is your primary directive.
-          2. If there is an existing branch with changes, you are already on it. Fix or extend as instructed.
-          3. If there is no existing branch, create one named \`${BRANCH}\` and implement from scratch.
-          4. Run \`pnpm agent:verify\` before finishing — all checks must pass.
-          5. **CRITICAL**: You MUST commit your changes before outputting the JSON block:
-             \`\`\`bash
-             git add -A
-             git commit -m "fix(${IDENTIFIER}): <short description>"
-             \`\`\`
-             If you do not commit, your work will be LOST.
-
-          ### Quality Rules
-          - Use \`@biarritz/ui\` components — never raw HTML for common patterns
-          - Use \`cn()\` for className merging
-          - Use \`type\` imports for types
-          - Use extensionless relative imports
-          - Follow DESIGN.md for any visual changes
-          - Read DESIGN.md before writing any UI code
-
-          ## Repo Context
-
-          ### CLAUDE.md
-          ${CLAUDE_MD}
-
-          ### AGENTS.md
-          ${AGENTS_MD}
-
-          ## Output
-          When done, print EXACTLY this JSON block:
-          \`\`\`json
-          {
-            "status": "success or failed",
-            "summary": "what you did in 2-3 sentences",
-            "branch": "the branch name"
-          }
-          \`\`\`
-          PROMPT_EOF
-
+          bash scripts/build-fix-prompt.sh /tmp/ticket.json "$INSTRUCTIONS" > /tmp/fix-prompt.txt
           echo "Fix prompt: $(wc -c < /tmp/fix-prompt.txt) bytes"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code@latest
-
-      - name: Run fix agent
-        id: agent
+      - name: Dispatch remote agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          npm install -g @anthropic-ai/claude-code@latest
           PROMPT=$(cat /tmp/fix-prompt.txt)
-          claude -p "$PROMPT" \
-            --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-            --output-format text \
-            > /tmp/fix-output.txt 2>&1 || true
-
-          echo "Fix output: $(wc -c < /tmp/fix-output.txt) bytes"
-
-          # Extract status and summary
-          python3 -c "
-          import re, json
-          text = open('/tmp/fix-output.txt').read()
-          pattern = r'\`\`\`json\s*(\{.*?\})\s*\`\`\`'
-          match = re.search(pattern, text, re.DOTALL)
-          status = 'unknown'
-          summary = 'No summary'
-          branch = ''
-          if match:
-              try:
-                  result = json.loads(match.group(1))
-                  status = result.get('status', 'unknown')
-                  summary = result.get('summary', 'No summary')
-                  branch = result.get('branch', '')
-              except json.JSONDecodeError:
-                  pass
-          with open('/tmp/fix-status.txt', 'w') as f:
-              f.write(status)
-          with open('/tmp/fix-summary.txt', 'w') as f:
-              f.write(summary)
-          with open('/tmp/fix-branch.txt', 'w') as f:
-              f.write(branch)
-          " 2>/dev/null || true
-
-      - name: Push changes
-        id: push
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BRANCH="${{ steps.ticket.outputs.branch }}"
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-          TITLE="${{ steps.ticket.outputs.title }}"
-          HAS_PR="${{ steps.pr_context.outputs.has_pr }}"
-          AGENT_STATUS=$(cat /tmp/fix-status.txt 2>/dev/null || echo "unknown")
-
-          # Check for the branch the agent may have created or is on
-          AGENT_BRANCH=$(cat /tmp/fix-branch.txt 2>/dev/null || echo "")
-          CURRENT_BRANCH=$(git branch --show-current)
-
-          if [[ -z "$CURRENT_BRANCH" || "$CURRENT_BRANCH" == "main" ]]; then
-            # Agent may have created a new branch
-            if [[ -n "$AGENT_BRANCH" ]] && git rev-parse --verify "$AGENT_BRANCH" >/dev/null 2>&1; then
-              CURRENT_BRANCH="$AGENT_BRANCH"
-            else
-              echo "No branch to push"
-              echo "status=failed" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-
-          # Check if there are commits ahead of origin
-          AHEAD=$(git rev-list --count "origin/${CURRENT_BRANCH}..${CURRENT_BRANCH}" 2>/dev/null || git rev-list --count "main..${CURRENT_BRANCH}" 2>/dev/null || echo "0")
-
-          if [[ "$AHEAD" == "0" ]]; then
-            echo "No new commits to push"
-            echo "status=no_changes" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git push origin "$CURRENT_BRANCH" --force-with-lease 2>/dev/null || git push origin "$CURRENT_BRANCH" --force
-
-          # Create PR if none exists
-          if [[ "$HAS_PR" != "true" ]]; then
-            PR_BODY="## Linear Ticket
-          [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
-
-          *Triggered by @agent comment.*
-
-          ---
-          *Automated by Linear Agent workflow*"
-
-            PR_URL=$(gh pr create \
-              --base main \
-              --head "$CURRENT_BRANCH" \
-              --title "${IDENTIFIER}: ${TITLE}" \
-              --body "$PR_BODY" 2>/dev/null || echo "")
-
-            if [[ -n "$PR_URL" ]]; then
-              echo "Created PR: $PR_URL"
-            fi
-          fi
-
-          echo "status=success" >> "$GITHUB_OUTPUT"
-
-      - name: Comment on Linear ticket
-        if: always()
-        run: |
-          source scripts/lib/linear.sh
-          ISSUE_ID="${{ steps.ticket.outputs.issue_id }}"
-          AGENT_STATUS=$(cat /tmp/fix-status.txt 2>/dev/null || echo "unknown")
-          AGENT_SUMMARY=$(cat /tmp/fix-summary.txt 2>/dev/null || echo "No summary")
-          PUSH_STATUS="${{ steps.push.outputs.status }}"
-
-          if [[ -z "$ISSUE_ID" ]]; then
-            echo "No issue ID, skipping"
-            exit 0
-          fi
-
-          if [[ "$AGENT_STATUS" == "success" && "$PUSH_STATUS" == "success" ]]; then
-            if [[ -n "${LINEAR_STATUS_IN_REVIEW:-}" ]]; then
-              linear_update_issue_status "$ISSUE_ID" "$LINEAR_STATUS_IN_REVIEW" || true
-            fi
-            linear_add_comment "$ISSUE_ID" "Fixed: ${AGENT_SUMMARY} — Agent" || true
-          elif [[ "$PUSH_STATUS" == "no_changes" ]]; then
-            linear_add_comment "$ISSUE_ID" "Agent ran but made no changes. The requested fix may already be applied. — Agent" || true
-          else
-            linear_add_comment "$ISSUE_ID" "Agent was unable to complete the fix. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) — Agent" || true
-          fi
+          claude --remote "$PROMPT"
+          echo "Remote fix agent dispatched"
