@@ -175,7 +175,12 @@ jobs:
           2. If there is an existing branch with changes, you are already on it. Fix or extend as instructed.
           3. If there is no existing branch, create one named \`${BRANCH}\` and implement from scratch.
           4. Run \`pnpm agent:verify\` before finishing — all checks must pass.
-          5. Commit your changes with a descriptive message.
+          5. **CRITICAL**: You MUST commit your changes before outputting the JSON block:
+             \`\`\`bash
+             git add -A
+             git commit -m "fix(${IDENTIFIER}): <short description>"
+             \`\`\`
+             If you do not commit, your work will be LOST.
 
           ### Quality Rules
           - Use \`@biarritz/ui\` components — never raw HTML for common patterns
