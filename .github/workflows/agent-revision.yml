@@ -124,7 +124,7 @@ PROMPT_EOF
       - name: Dispatch remote agent
         if: steps.guard.outputs.should_run == 'true'
         env:
-          CLAUDE_CODE_TOKEN: ${{ secrets.CLAUDE_CODE_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           npm install -g @anthropic-ai/claude-code@latest
           PROMPT=$(cat /tmp/revision-prompt.txt)
