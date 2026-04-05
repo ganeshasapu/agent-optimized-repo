@@ -7,13 +7,22 @@ on:
       - 'packages/db/src/schema/**'
       - 'packages/db/src/migrations/**'
 
+  # Re-run reconciliation for open PRs when main gets new migrations
+  push:
+    branches: [main]
+    paths:
+      - 'packages/db/src/schema/**'
+      - 'packages/db/src/migrations/**'
+
 concurrency:
-  group: migration-reconcile-${{ github.event.pull_request.number }}
+  group: migration-reconcile-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  reconcile:
+  # Runs directly on the PR that triggered it
+  reconcile-pr:
     name: Reconcile Migrations
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,12 +53,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Reconcile migrations
-        id: reconcile
         run: bash scripts/reconcile-migrations.sh
 
       - name: Push reconciled migrations
         run: |
-          # Check if reconciliation created a new commit
           AHEAD=$(git rev-list --count "origin/${{ github.head_ref }}..HEAD" 2>/dev/null || echo "0")
           if [[ "$AHEAD" -gt 0 ]]; then
             git push origin "HEAD:${{ github.head_ref }}"
@@ -57,3 +64,80 @@ jobs:
           else
             echo "No reconciliation needed, nothing to push"
           fi
+
+  # When main gets new migrations, find open PRs that may now conflict and update them
+  reconcile-open-prs:
+    name: Reconcile Open PRs
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Find and reconcile conflicting PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find open PRs that touch migration/schema files
+          OPEN_PRS=$(gh pr list --state open --json number,headRefName,files \
+            --jq '.[] | select(.files[]?.path | test("packages/db/src/(schema|migrations)/")) | "\(.number) \(.headRefName)"' \
+            2>/dev/null || true)
+
+          if [[ -z "$OPEN_PRS" ]]; then
+            echo "No open PRs touch migration/schema files. Nothing to reconcile."
+            exit 0
+          fi
+
+          echo "Open PRs with migration/schema files:"
+          echo "$OPEN_PRS"
+
+          # Process each PR
+          echo "$OPEN_PRS" | while read -r PR_NUMBER BRANCH; do
+            echo ""
+            echo "=== Processing PR #${PR_NUMBER} (${BRANCH}) ==="
+
+            # Check out the PR branch
+            git fetch origin "$BRANCH"
+            git checkout -B "reconcile-${PR_NUMBER}" "origin/${BRANCH}"
+
+            # Run reconciliation
+            if bash scripts/reconcile-migrations.sh; then
+              # Check if reconciliation made changes
+              AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "0")
+              if [[ "$AHEAD" -gt 0 ]]; then
+                git push origin "HEAD:${BRANCH}"
+                echo "Pushed reconciliation commit to PR #${PR_NUMBER}"
+              else
+                echo "PR #${PR_NUMBER}: no reconciliation needed"
+              fi
+            else
+              echo "PR #${PR_NUMBER}: reconciliation failed (may need manual resolution)"
+            fi
+
+            # Return to main for next iteration
+            git checkout main
+          done
