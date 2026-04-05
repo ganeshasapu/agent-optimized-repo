@@ -21,6 +21,8 @@ cd packages/db && npx drizzle-kit migrate
 
 Do NOT use `pnpm db:generate` / `pnpm db:migrate` — those Turborepo commands don't pass `DATABASE_URL` correctly in CI.
 
+**Note:** CI may regenerate your migration files if they conflict with migrations that merged to `main` while you were working. This is automatic — your schema `.ts` files are the source of truth. The migration SQL and `_journal.json` are derived artifacts.
+
 ## Schema Patterns
 
 ### Basic table

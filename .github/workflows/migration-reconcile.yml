@@ -1,0 +1,59 @@
+name: Migration Reconciliation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/db/src/schema/**'
+      - 'packages/db/src/migrations/**'
+
+concurrency:
+  group: migration-reconcile-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    name: Reconcile Migrations
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Reconcile migrations
+        id: reconcile
+        run: bash scripts/reconcile-migrations.sh
+
+      - name: Push reconciled migrations
+        run: |
+          # Check if reconciliation created a new commit
+          AHEAD=$(git rev-list --count "origin/${{ github.head_ref }}..HEAD" 2>/dev/null || echo "0")
+          if [[ "$AHEAD" -gt 0 ]]; then
+            git push origin "HEAD:${{ github.head_ref }}"
+            echo "Pushed reconciliation commit"
+          else
+            echo "No reconciliation needed, nothing to push"
+          fi
