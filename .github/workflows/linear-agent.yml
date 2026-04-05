@@ -287,8 +287,14 @@ jobs:
               AGENT_DESC="*No description provided by agent.*"
             fi
 
+            NEON_BRANCH_ID="${{ steps.neon.outputs.branch_id }}"
+            NEON_URL="https://console.neon.tech/app/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/tables"
+
             PR_BODY="## Linear Ticket
           [${IDENTIFIER}](https://linear.app/issue/${IDENTIFIER})
+
+          ## Neon Database Branch
+          [View tables](${NEON_URL})
 
           ${AGENT_DESC}
 
@@ -437,8 +443,10 @@ jobs:
           echo "Review posted with verdict: $VERDICT" >&2
 
       - name: Cleanup Neon branch
-        if: always()
+        if: always() && steps.pr.outputs.status != 'success'
         run: |
+          # Only delete Neon branch if PR was NOT created successfully.
+          # When a PR exists, keep the branch so reviewers can inspect the DB via the link in the PR.
           if [[ -f .neon-branch-id ]]; then
             source scripts/lib/common.sh
             source scripts/lib/neon.sh
