@@ -98,17 +98,10 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@latest
 
-      - name: Test remote with simple prompt
+      - name: Dispatch remote agent
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          echo "=== Test 1: simple positional arg ==="
-          timeout 30 claude --remote "Say hello" 2>&1 || echo "Exit: $?"
-          echo ""
-          echo "=== Test 2: prompt via -p flag ==="
-          timeout 30 claude -p --remote "Say hello" 2>&1 || echo "Exit: $?"
-          echo ""
-          echo "=== Test 3: prompt flag style ==="
-          timeout 30 claude --remote --prompt "Say hello" 2>&1 || echo "Exit: $?"
-          echo ""
-          echo "=== Done ==="
+          PROMPT=$(cat /tmp/agent-prompt.txt)
+          # Use 'remote' as subcommand (not --remote flag)
+          timeout 60 claude remote "$PROMPT" 2>&1 || echo "Exit: $?"
