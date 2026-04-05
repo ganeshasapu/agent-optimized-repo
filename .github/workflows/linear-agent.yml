@@ -90,5 +90,5 @@ jobs:
           claude install --force
           export PATH="$HOME/.local/bin:$PATH"
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          echo "$PROMPT" | claude --remote
+          claude --remote "$PROMPT" --dangerously-skip-permissions
           echo "Remote agent session dispatched"
