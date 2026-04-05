@@ -90,6 +90,8 @@ jobs:
           claude install --force
           export PATH="$HOME/.local/bin:$PATH"
           PROMPT=$(cat /tmp/agent-prompt.txt)
-          echo "Prompt length: ${#PROMPT} chars"
-          echo "$PROMPT" | timeout 120 claude --remote 2>&1 || echo "Exit code: $?"
+          # Write prompt to file to avoid shell quoting issues
+          echo "$PROMPT" > /tmp/remote-prompt.txt
+          # Use script to allocate a pseudo-TTY and auto-answer the trust dialog
+          printf '1\n' | script -qec "claude --remote \"\$(cat /tmp/remote-prompt.txt)\"" /dev/null 2>&1
           echo "Remote agent dispatch completed"
