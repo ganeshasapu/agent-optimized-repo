@@ -1,4 +1,5 @@
-export { users } from "./users";
+export { categories } from "./categories";
+export { comments } from "./comments";
 export { projects } from "./projects";
 export { tags } from "./tags";
-export { categories } from "./categories";
+export { users } from "./users";
