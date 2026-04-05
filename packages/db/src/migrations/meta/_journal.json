@@ -40,8 +40,15 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1775356928849,
-      "tag": "0005_known_rocket_raccoon",
+      "when": 1775356896135,
+      "tag": "0005_glossy_jack_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1775359205884,
+      "tag": "0006_high_dragon_lord",
       "breakpoints": true
     }
   ]

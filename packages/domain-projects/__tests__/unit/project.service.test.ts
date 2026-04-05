@@ -82,6 +82,7 @@ describe("projectService", () => {
     const { projectService } = await import("../../src/services/project.service");
     const result = await projectService.createProject({
       name: "New Project",
+      identifier: "NEW",
       ownerId: "550e8400-e29b-41d4-a716-446655440001",
     });
 
