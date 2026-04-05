@@ -1,11 +1,11 @@
 {
-  "id": "17afaf10-440b-481f-bc4c-841c75b1e80a",
+  "id": "50a87ac9-795e-4936-beb2-8149da17b077",
   "prevId": "70f8eec7-5637-4e00-9550-766bc1a3fee0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.comments": {
-      "name": "comments",
+    "public.categories": {
+      "name": "categories",
       "schema": "",
       "columns": {
         "id": {
@@ -15,15 +15,15 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "body": {
-          "name": "body",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "author_id": {
-          "name": "author_id",
-          "type": "uuid",
+        "slug": {
+          "name": "slug",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -36,21 +36,7 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {
-        "comments_author_id_users_id_fk": {
-          "name": "comments_author_id_users_id_fk",
-          "tableFrom": "comments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "author_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
