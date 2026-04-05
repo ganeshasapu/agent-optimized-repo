@@ -96,38 +96,48 @@ if $DRY_RUN; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Merge main's migration state into this branch
+# 7. Merge main into this branch (creates proper merge relationship for GitHub)
 # ---------------------------------------------------------------------------
-log_info "Merging main's migration state..."
+log_info "Merging origin/main into branch..."
 
-# First, bring in any new schema files from main (e.g., another agent's table)
-# We use checkout to grab main's migration artifacts without a full merge
-git checkout origin/main -- "${JOURNAL}" 2>/dev/null || true
-for i in $(seq 0 "${MAIN_MAX_IDX}"); do
-  PADDED=$(printf "%04d" "$i")
-  git checkout origin/main -- "${META_DIR}/${PADDED}_snapshot.json" 2>/dev/null || true
-  # Also grab the SQL file if it exists (main may have new migrations)
-  MAIN_SQL=$(git show origin/main --name-only --diff-filter=A -- "${MIGRATION_DIR}/${PADDED}_*.sql" 2>/dev/null | head -1 || true)
-  if [[ -n "$MAIN_SQL" ]]; then
-    git checkout origin/main -- "$MAIN_SQL" 2>/dev/null || true
+# Save the PR's schema files before merge (these are the source of truth)
+PR_SCHEMA_FILES=""
+for f in ${PR_SCHEMA_CHANGES}; do
+  if [[ -f "$f" ]]; then
+    cp "$f" "/tmp/pr_schema_$(basename "$f")"
+    PR_SCHEMA_FILES="$PR_SCHEMA_FILES $f"
   fi
 done
 
-# Also bring in any schema .ts files added on main (e.g., another agent's table)
-if [[ -n "$MAIN_SCHEMA_CHANGES" ]]; then
-  for f in $MAIN_SCHEMA_CHANGES; do
-    if git show "origin/main:${f}" >/dev/null 2>&1; then
-      git checkout origin/main -- "$f" 2>/dev/null || true
-      log_info "Imported schema file from main: ${f}"
+# Merge main, accepting main's version for conflicts (we'll fix migration files next)
+if ! git merge origin/main --no-edit -X theirs 2>/dev/null; then
+  # If merge still has conflicts, resolve them by accepting main's version
+  # for migration artifacts and keeping PR's schema files
+  git checkout --theirs -- "${MIGRATION_DIR}/" "${META_DIR}/" 2>/dev/null || true
+  git checkout --theirs -- "${SCHEMA_DIR}/index.ts" 2>/dev/null || true
+  git add "${MIGRATION_DIR}/" "${META_DIR}/" "${SCHEMA_DIR}/index.ts" 2>/dev/null || true
+
+  # Restore PR's schema .ts files (source of truth)
+  for f in ${PR_SCHEMA_FILES}; do
+    BACKUP="/tmp/pr_schema_$(basename "$f")"
+    if [[ -f "$BACKUP" ]]; then
+      cp "$BACKUP" "$f"
+      git add "$f"
     fi
   done
+
+  git commit --no-edit -m "ci: merge main for migration reconciliation" 2>/dev/null || true
 fi
 
-# ---------------------------------------------------------------------------
-# 8. Delete this PR's conflicting migration files
-# ---------------------------------------------------------------------------
-log_info "Removing PR's conflicting migration files..."
+log_info "Merged main successfully."
 
+# ---------------------------------------------------------------------------
+# 8. Delete this PR's conflicting migration files (now on top of main's state)
+# ---------------------------------------------------------------------------
+NEXT_IDX=$((MAIN_MAX_IDX + 1))
+log_info "Removing PR's conflicting migration files (index >= ${NEXT_IDX})..."
+
+# After merging main, the PR's old migration files may still exist
 for f in $PR_NEW_SQLS; do
   if [[ -f "$f" ]]; then
     rm -f "$f"
@@ -136,7 +146,6 @@ for f in $PR_NEW_SQLS; do
 done
 
 # Delete snapshots beyond main's state
-NEXT_IDX=$((MAIN_MAX_IDX + 1))
 for f in "${META_DIR}/"*_snapshot.json; do
   [[ -f "$f" ]] || continue
   IDX=$(basename "$f" | sed 's/\([0-9]*\)_.*/\1/')
@@ -145,6 +154,9 @@ for f in "${META_DIR}/"*_snapshot.json; do
     log_info "  Deleted snapshot: $f"
   fi
 done
+
+# Reset journal to main's version (clean base for regeneration)
+git checkout origin/main -- "${JOURNAL}" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 9. Regenerate schema/index.ts from filesystem
