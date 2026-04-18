@@ -51,4 +51,31 @@ for step in "${STEPS[@]}"; do
   fi
 done
 
+# Momentic: run only the .test.yaml files this PR touched (fast local feedback)
+# Full suite runs in CI regardless — this is the agent's in-sandbox check.
+TOUCHED_TESTS=$(git diff --name-only origin/main...HEAD -- 'e2e/momentic/**/*.test.yaml' 2>/dev/null || true)
+if [[ -n "$TOUCHED_TESTS" ]]; then
+  TOTAL=$((TOTAL + 1))
+  CURRENT=$((CURRENT + 1))
+  TOUCHED_COUNT=$(echo "$TOUCHED_TESTS" | wc -l | tr -d ' ')
+  BASE_URL="${BASE_URL:-http://localhost:3000}"
+  log_info "[$CURRENT/$TOTAL] Running: momentic (${TOUCHED_COUNT} touched test(s))"
+
+  # Reuse an already-running dev server if present, else start one for this run
+  if curl -sf "$BASE_URL" >/dev/null 2>&1; then
+    MOMENTIC_ARGS=(--url-override "$BASE_URL" --wait-on "$BASE_URL")
+  else
+    MOMENTIC_ARGS=(--start "pnpm --filter=@biarritz/web dev" --wait-on "$BASE_URL" --url-override "$BASE_URL")
+  fi
+
+  # shellcheck disable=SC2086  # word-splitting $TOUCHED_TESTS is intentional
+  if npx momentic run "${MOMENTIC_ARGS[@]}" $TOUCHED_TESTS 2>&1; then
+    log_success "[$CURRENT/$TOTAL] momentic passed"
+  else
+    log_error "[$CURRENT/$TOTAL] momentic FAILED"
+    log_error "Pipeline stopped. Fix e2e errors before continuing."
+    exit 1
+  fi
+fi
+
 log_success "=== All Checks Passed ==="

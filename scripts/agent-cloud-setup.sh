@@ -33,6 +33,19 @@ cd "${REPO_ROOT}/packages/db"
 DATABASE_URL="$DATABASE_URL" npx drizzle-kit migrate
 log_success "Migrations complete"
 
+# Step 5: Install Momentic browsers for e2e tests
+log_info "Installing Momentic browsers..."
+npx momentic install-browsers --all
+log_success "Momentic browsers installed"
+
+# Step 6: Validate MOMENTIC_API_KEY (required for MCP and AI steps)
+if [[ -z "${MOMENTIC_API_KEY:-}" ]]; then
+  log_error "MOMENTIC_API_KEY is not set — Momentic MCP server will fail and the agent cannot author e2e tests"
+  log_error "Set it in the CI secret store or .env.local for local dev"
+  exit 1
+fi
+log_success "MOMENTIC_API_KEY is set"
+
 log_success "=== Cloud Agent Setup Complete ==="
 echo ""
 echo "DATABASE_URL=${DATABASE_URL}"

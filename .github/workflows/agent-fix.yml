@@ -6,6 +6,7 @@ on:
 
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+  MOMENTIC_API_KEY: ${{ secrets.MOMENTIC_API_KEY }}
 
 concurrency:
   group: agent-fix-${{ github.event.client_payload.issue_id }}

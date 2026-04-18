@@ -7,6 +7,7 @@ on:
 env:
   LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
   LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
+  MOMENTIC_API_KEY: ${{ secrets.MOMENTIC_API_KEY }}
 
 jobs:
   agent:

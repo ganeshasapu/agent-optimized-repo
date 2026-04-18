@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "momentic": {
+      "command": "npx",
+      "args": ["momentic", "mcp", "--config", "momentic.config.yaml"],
+      "env": {
+        "MOMENTIC_API_KEY": "${MOMENTIC_API_KEY}"
+      }
+    }
+  }
+}

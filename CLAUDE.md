@@ -20,6 +20,7 @@
 - `pnpm typecheck` — TypeScript checking across all packages
 - `pnpm lint` — ESLint across all packages
 - `pnpm test` — Run all Vitest tests
+- `pnpm test:momentic` — Run full Momentic e2e suite (requires dev server on :3000 + `MOMENTIC_API_KEY`)
 - `pnpm db:generate` — Generate Drizzle migrations
 - `pnpm db:migrate` — Run migrations
 
@@ -97,6 +98,13 @@ Each domain (`packages/domain-*`) is a self-contained feature boundary:
 - Unit tests mock the database via `vi.mock("@biarritz/db", ...)`
 - Integration tests use `describe.skipIf(!process.env.DATABASE_URL)` guard
 - Test files match source: `user.service.ts` -> `user.service.test.ts`
+
+### E2E (Momentic)
+- Tests live at `e2e/momentic/*.test.yaml` and run in Chromium against a dev server
+- A Momentic MCP server is wired via `.mcp.json` — agents author tests via `momentic_test_create` / `momentic_test_edit` tools
+- `pnpm agent:verify` runs the touched `.test.yaml` files only; PR CI runs the full suite (`--parallel 5`, step-cache on)
+- Requires `MOMENTIC_API_KEY` in env (local `.env.local`; GitHub secret in CI)
+- See `AGENTS.md` → "E2E testing with Momentic" for the full authoring workflow
 
 ### Database
 - All schema changes go in `packages/db/src/schema/`
