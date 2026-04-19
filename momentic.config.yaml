@@ -1,3 +1,5 @@
+name: biarritz
+
 include:
   - e2e/momentic/**/*.test.yaml
   - e2e/momentic/**/*.module.yaml
