@@ -19,10 +19,6 @@
       "dependsOn": ["^build"],
       "env": ["DATABASE_URL"]
     },
-    "test:e2e": {
-      "dependsOn": ["build"],
-      "env": ["DATABASE_URL", "BASE_URL"]
-    },
     "db:generate": {
       "cache": false
     },

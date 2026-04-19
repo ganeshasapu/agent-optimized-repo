@@ -24,7 +24,7 @@ Thumbs.db
 # Test
 coverage/
 test-results/
-playwright-report/
+momentic-reports/
 
 # Neon
 .neon-branch-id

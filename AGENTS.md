@@ -61,6 +61,46 @@ If your ticket requires schema changes:
 - Look at `packages/domain-users/__tests__/` for examples
 - Run tests with `pnpm --filter=@biarritz/<package-name> test` during development
 
+#### E2E testing with Momentic
+
+E2E tests live at `e2e/momentic/*.test.yaml` and run in a real Chromium browser against a running Next.js dev server. A Momentic MCP server is registered in `.mcp.json` and comes up automatically when you work in this repo — the `momentic_test_create`, `momentic_test_edit`, `momentic_get_artifacts`, and `momentic_session_terminate` tools are available to you.
+
+**When to add a new test:**
+- The ticket introduces a user-facing flow: form submit, multi-step navigation, a state change the user can observe in the browser.
+
+**When to modify an existing test:**
+- The ticket changes copy, selectors, URL structure, or validation behavior in a flow an existing `.test.yaml` covers. Fix the test to match the new expected behavior.
+
+**When to skip:**
+- Schema-only migration with no user-visible surface change.
+- Pure internal refactor that leaves all flows unchanged.
+- Dependency bumps, documentation, tooling.
+
+**Authoring via MCP (preferred):**
+1. Make sure the dev server is up: `pnpm --filter=@biarritz/web dev` (leave it running).
+2. Call `momentic_test_create` with a descriptive name and `baseUrl: "http://localhost:3000"`.
+3. Drive the live browser through the flow via MCP tools; the session records each step.
+4. Refine assertions with `momentic_test_edit` — prefer precise `page-check` / `element-check` assertions over vague AI checks.
+5. Commit the resulting `.test.yaml` under `e2e/momentic/`.
+
+**Fallback authoring:** if the MCP server is unavailable, write the `.test.yaml` by hand following the schema at <https://momentic.ai/docs/editor/test-definition> and verify with `npx momentic run e2e/momentic/<file>.test.yaml --url-override http://localhost:3000`.
+
+**Step cost discipline:**
+- Prefer deterministic steps (`click`, `type`, `navigate`, `page-check`, `element-check`) over AI steps (`ai-action`, `ai-extract`, `ai-check`). AI steps call the Momentic model and cost credits per run; deterministic steps do not.
+- Only reach for AI steps when a selector is genuinely unstable or the check requires judgment (e.g. "verify the chart rendered a meaningful value").
+
+**Modifying or deleting an existing test:**
+- Every modification must be explicitly called out in the PR body `## Testing` section with a reason. Removing assertions without justification is a code-review red flag.
+- Deletions require a one-sentence reason (test no longer applies, flow removed, etc.).
+
+**Quarantining a flaky test:**
+- Add `quarantine: true` to the test YAML with a one-line reason at the top of the file.
+- Quarantined tests still run but do not gate CI. Use sparingly — prefer fixing the flake.
+
+**Local execution:**
+- Touched tests only (matches what `pnpm agent:verify` runs): `npx momentic run --url-override http://localhost:3000 <path>.test.yaml`
+- Full suite: `pnpm test:momentic`
+
 #### Quality rules
 
 - Use `@biarritz/ui` components (Button, Input, Card, etc.) — never build raw HTML for common UI patterns
@@ -89,7 +129,7 @@ Before finishing, run the full pipeline:
 ```bash
 pnpm agent:verify
 ```
-All four steps must pass: typecheck, lint, test, build.
+All steps must pass: typecheck, lint, test, build, and (if any `.test.yaml` files in the PR diff) a Momentic run of the touched e2e tests.
 
 ### 6. Self-review checklist
 
@@ -131,8 +171,12 @@ gh pr create \
 <bullet list of key changes>
 
 ## Testing
-- Unit tests: `pnpm --filter=@biarritz/<package> test`
-- Manual testing: <steps to verify>
+- Unit tests: <added/modified X | none — why>
+- Integration tests: <added/modified X | none — why>
+- Momentic E2E:
+  - Added: <file.test.yaml — covers flow Y | none>
+  - Modified: <file.test.yaml — changed Z because ... | none>
+  - Skipped: <reason — e.g. "schema-only migration, no user-visible change" | N/A>
 
 ---
 *Automated by Linear Agent workflow*

@@ -75,12 +75,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-  e2e:
-    name: E2E Tests
+  momentic:
+    name: Momentic E2E
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [migrate, build]
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      MOMENTIC_API_KEY: ${{ secrets.MOMENTIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -90,5 +91,19 @@ jobs:
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: npx playwright install --with-deps chromium
-      - run: pnpm test:e2e
+      - run: npx momentic install-browsers --all
+      - name: Run full Momentic suite
+        run: |
+          npx momentic run \
+            --start "pnpm --filter=@biarritz/web start" \
+            --wait-on http://localhost:3000 \
+            --url-override http://localhost:3000 \
+            --parallel 5 \
+            --reporter junit \
+            --reporter-dir ./momentic-reports
+      - name: Upload Momentic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: momentic-results
+          path: ./momentic-reports
