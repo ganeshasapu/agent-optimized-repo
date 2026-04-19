@@ -94,34 +94,20 @@ jobs:
             --jq '.[] | "File: \(.path):\(.line // .original_line // "N/A")\nComment: \(.body)\n---"' \
             > /tmp/review-comments.txt 2>/dev/null || echo "" > /tmp/review-comments.txt
 
+      - name: Checkout
+        if: steps.guard.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
       - name: Build revision prompt
         if: steps.guard.outputs.should_run == 'true'
         run: |
-          IDENTIFIER="${{ steps.ticket.outputs.identifier }}"
-          BRANCH="${{ steps.guard.outputs.branch }}"
-          REVIEW_BODY=$(cat /tmp/review-body.txt)
-          REVIEW_COMMENTS=$(cat /tmp/review-comments.txt)
-
-          cat > /tmp/revision-prompt.txt <<PROMPT_EOF
-You are addressing review feedback on a pull request.
-
-## Ticket
-- ID: ${IDENTIFIER}
-
-## Branch
-${BRANCH}
-
-## Review Feedback
-
-### Reviewer's Summary
-${REVIEW_BODY}
-
-### Inline Comments
-${REVIEW_COMMENTS}
-
-Read AGENTS.md (section: "Addressing Review Feedback") for full instructions.
-PROMPT_EOF
-
+          bash scripts/build-revision-prompt.sh \
+            "${{ steps.ticket.outputs.identifier }}" \
+            "${{ steps.guard.outputs.branch }}" \
+            "${{ steps.guard.outputs.pr_number }}" \
+            /tmp/review-body.txt \
+            /tmp/review-comments.txt \
+            > /tmp/revision-prompt.txt
           echo "Revision prompt: $(wc -c < /tmp/revision-prompt.txt) bytes"
 
       - name: Install Claude Code

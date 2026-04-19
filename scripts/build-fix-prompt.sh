@@ -23,6 +23,20 @@ SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 
 cat <<PROMPT
 A team member has asked you to make changes on an existing ticket.
 
+## First action (do this before anything else)
+
+Post your session URL to the Linear ticket and to the open PR (if one exists) so the requester can open the live conversation. Run:
+
+    bash scripts/linear-comment.sh "${ISSUE_ID}" "🤖 Live session (fix): https://claude.ai/code/\$CLAUDE_CODE_REMOTE_SESSION_ID
+
+Open this link to watch the agent work or answer clarifying questions."
+
+    # If a PR for this branch is open, comment there too:
+    PR_NUMBER=\$(gh pr list --head "linear/${ISSUE_ID}-${SLUG}" --json number --jq '.[0].number' 2>/dev/null || true)
+    if [[ -n "\$PR_NUMBER" ]]; then
+      gh pr comment "\$PR_NUMBER" --body "🤖 Live session (fix): https://claude.ai/code/\$CLAUDE_CODE_REMOTE_SESSION_ID"
+    fi
+
 ## Ticket
 - ID: ${ISSUE_ID}
 - Title: ${TITLE}
