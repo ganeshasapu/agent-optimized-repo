@@ -51,6 +51,18 @@ fi
 cat <<PROMPT
 You have been assigned a Linear ticket to implement.
 
+## First action (do this before anything else)
+
+Post your session URL to the Linear ticket so the requester can open the live conversation. Run:
+
+    bash scripts/linear-comment.sh "${ISSUE_ID}" "🤖 Live session: https://claude.ai/code/\$CLAUDE_CODE_REMOTE_SESSION_ID
+
+Open this link to watch the agent work, steer it mid-run, or answer clarifying questions."
+
+Then include this line in the PR body when you open the PR:
+
+    Live session: https://claude.ai/code/\$CLAUDE_CODE_REMOTE_SESSION_ID
+
 ## Ticket
 - ID: ${ISSUE_ID}
 - Title: ${TITLE}
