@@ -7,13 +7,7 @@ Agents running via `claude --remote` read this file automatically.
 
 ### Evaluate the ticket
 
-Before implementing, decide:
-
-1. **Is the ticket clear enough?** If the ticket is genuinely ambiguous — contradictory requirements, missing critical design decisions, or references unavailable resources — request clarification (see "Requesting Clarification" below). If it's just light on detail, use your best judgment and proceed.
-
-2. **Would this produce a PR that's logical and easy to review?** If not, decompose the ticket into sub-tickets that each make sense as their own PR (see "Decomposing Tickets" below).
-
-If neither applies, proceed with implementation.
+Before implementing, decide: **Is the ticket clear enough?** If the ticket is genuinely ambiguous — contradictory requirements, missing critical design decisions, or references unavailable resources — request clarification (see "Requesting Clarification" below). If it's just light on detail, use your best judgment and proceed.
 
 ## Standard Workflow
 
@@ -186,20 +180,38 @@ EOF
 
 Replace `<TICKET-ID>` with your ticket identifier. Read `<NEON_BRANCH_ID>` from `.neon-branch-id` (written by `pnpm agent:cloud-setup`).
 
-### 9. Follow-up tickets
+### 9. Follow-up specs
 
-If you discover unrelated bugs, missing tests, or improvements during implementation:
-1. Check the existing tickets list in your prompt to avoid duplicates
-2. If a similar ticket already exists, add a comment:
-   ```bash
-   source scripts/lib/linear.sh
-   linear_add_comment "<EXISTING_ISSUE_ID>" "Discovered while working on <TICKET-ID>: <your finding>"
-   ```
-3. If no similar ticket exists, create a new one:
-   ```bash
-   source scripts/lib/linear.sh
-   linear_create_issue "$LINEAR_TEAM_ID" "<title>" "<description>" ""
-   ```
+If you discover unrelated bugs, missing tests, or improvements during implementation, create a spec ticket so the user can review and decide whether to queue it for implementation.
+
+**Always create a spec** — even for trivial items (typo fix, one-line null check). Uniform rule, no judgment about what deserves a spec.
+
+**Before creating**, check the existing tickets list in your prompt. If a similar ticket already exists, add a comment referencing your finding instead:
+```bash
+source scripts/lib/linear.sh
+linear_add_comment "<EXISTING_ISSUE_ID>" "Discovered while working on <TICKET-ID>: <your finding>"
+```
+
+**If no similar ticket exists**, create a spec:
+```bash
+source scripts/lib/linear.sh
+linear_create_spec \
+  --title "<concise title>" \
+  --problem "<what problem and why it matters>" \
+  --approach "<chosen approach, 2-4 sentences>" \
+  --scope-in "- <bullet>
+- <bullet>" \
+  --scope-out "- <bullet>
+- <bullet>" \
+  --done "- <observable done criterion>
+- <observable done criterion>" \
+  --files "- <file or area>
+- <file or area>" \
+  --risks "<risks/unknowns, or 'None'>" \
+  --source-ticket "<TICKET-ID>"
+```
+
+All flags are required. The helper bails if any are missing or empty. Specs land in Backlog — the user reviews and promotes to Todo to trigger implementation. Keep each field tight but complete: the user decides yes/no from the spec, and a future agent will implement directly from the same description.
 
 ## Requesting Clarification
 
@@ -231,35 +243,6 @@ linear_update_issue_status "<ISSUE_ID>" "$LINEAR_STATUS_NEEDS_CLARIFICATION"
 ```
 
 Then exit without creating a branch or making changes.
-
-## Decomposing Tickets
-
-If the ticket would not produce a PR that's logical and easy to review, break it into sub-tickets. Each sub-ticket should make sense as its own PR — reviewable, self-contained, and logically coherent.
-
-To decompose:
-
-```bash
-source scripts/lib/linear.sh
-
-# Create sub-tickets (order by dependencies: DB changes first, then services, then UI)
-linear_create_sub_issue "$LINEAR_TEAM_ID" "<PARENT_ISSUE_ID>" "Sub-ticket title" "Parent: <TICKET-ID>
-Order: 1/N
-
-<description of what this sub-ticket covers>"
-
-# Repeat for each sub-ticket...
-
-# Set each sub-ticket to Todo to trigger new agents
-linear_update_issue_status "<SUB_ISSUE_ID>" "$LINEAR_STATUS_TODO"
-
-# Update parent to Decomposed
-linear_update_issue_status "<PARENT_ISSUE_ID>" "$LINEAR_STATUS_DECOMPOSED"
-
-# Post a comment on the parent
-linear_add_comment "<PARENT_ISSUE_ID>" "Decomposed into N sub-tickets. Each sub-ticket will be implemented independently."
-```
-
-Then exit without creating a branch or implementing.
 
 ## Domain Rules
 

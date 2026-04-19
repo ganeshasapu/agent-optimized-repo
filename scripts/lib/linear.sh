@@ -90,44 +90,74 @@ linear_add_comment() {
   log_success "Comment added"
 }
 
-linear_create_issue() {
-  local team_id="$1"
-  local title="$2"
-  local description="$3"
-  local label_ids="$4"
+linear_create_spec() {
+  local title="" problem="" approach="" scope_in="" scope_out=""
+  local done_criteria="" files="" risks="" source_ticket=""
 
-  log_info "Creating Linear issue: $title"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)         title="$2";         shift 2 ;;
+      --problem)       problem="$2";       shift 2 ;;
+      --approach)      approach="$2";      shift 2 ;;
+      --scope-in)      scope_in="$2";      shift 2 ;;
+      --scope-out)     scope_out="$2";     shift 2 ;;
+      --done)          done_criteria="$2"; shift 2 ;;
+      --files)         files="$2";         shift 2 ;;
+      --risks)         risks="$2";         shift 2 ;;
+      --source-ticket) source_ticket="$2"; shift 2 ;;
+      *) log_error "linear_create_spec: unknown flag: $1"; return 1 ;;
+    esac
+  done
 
-  local escaped_title
-  escaped_title=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$title")
-  local escaped_desc
-  escaped_desc=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$description")
+  local missing=()
+  [[ -z "$title" ]]         && missing+=("--title")
+  [[ -z "$problem" ]]       && missing+=("--problem")
+  [[ -z "$approach" ]]      && missing+=("--approach")
+  [[ -z "$scope_in" ]]      && missing+=("--scope-in")
+  [[ -z "$scope_out" ]]     && missing+=("--scope-out")
+  [[ -z "$done_criteria" ]] && missing+=("--done")
+  [[ -z "$files" ]]         && missing+=("--files")
+  [[ -z "$risks" ]]         && missing+=("--risks")
+  [[ -z "$source_ticket" ]] && missing+=("--source-ticket")
 
-  local label_part=""
-  if [[ -n "$label_ids" ]]; then
-    label_part=$(python3 -c "
-import sys
-ids = sys.argv[1].split(',')
-print(', labelIds: [' + ', '.join(['\"' + i.strip() + '\"' for i in ids]) + ']')
-" "$label_ids")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    log_error "linear_create_spec: missing required flags: ${missing[*]}"
+    return 1
   fi
 
-  local response
-  response=$(linear_gql "mutation { issueCreate(input: { teamId: \"${team_id}\", title: \"${escaped_title}\", description: \"${escaped_desc}\", priority: 4${label_part} }) { success issue { id identifier url } } }") || return 1
-  echo "$response" | python3 -c "
-import sys, json
-issue = json.load(sys.stdin)['data']['issueCreate']['issue']
-print(json.dumps(issue))
-"
-}
+  require_env LINEAR_TEAM_ID
+  require_env LINEAR_STATUS_BACKLOG
 
-linear_create_sub_issue() {
-  local team_id="$1"
-  local parent_id="$2"
-  local title="$3"
-  local description="$4"
+  log_info "Creating spec ticket: $title"
 
-  log_info "Creating sub-issue: $title (parent: $parent_id)"
+  local description
+  description=$(cat <<EOF
+## Problem
+${problem}
+
+## Proposed approach
+${approach}
+
+## Scope
+**In scope:**
+${scope_in}
+
+**Out of scope:**
+${scope_out}
+
+## Done criteria
+${done_criteria}
+
+## Files / areas touched
+${files}
+
+## Risks
+${risks}
+
+---
+*Spec authored by agent while working on [${source_ticket}](https://linear.app/issue/${source_ticket}). Move to Todo to trigger implementation; edit description freely before doing so.*
+EOF
+)
 
   local escaped_title
   escaped_title=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$title")
@@ -135,11 +165,12 @@ linear_create_sub_issue() {
   escaped_desc=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$description")
 
   local response
-  response=$(linear_gql "mutation { issueCreate(input: { teamId: \"${team_id}\", parentId: \"${parent_id}\", title: \"${escaped_title}\", description: \"${escaped_desc}\", priority: 3 }) { success issue { id identifier url } } }") || return 1
+  response=$(linear_gql "mutation { issueCreate(input: { teamId: \"${LINEAR_TEAM_ID}\", stateId: \"${LINEAR_STATUS_BACKLOG}\", title: \"${escaped_title}\", description: \"${escaped_desc}\", priority: 3 }) { success issue { id identifier url } } }") || return 1
   echo "$response" | python3 -c "
 import sys, json
 issue = json.load(sys.stdin)['data']['issueCreate']['issue']
 print(json.dumps(issue))
+print(f\"Created spec: {issue['identifier']} — {issue['url']}\", file=sys.stderr)
 "
 }
 
